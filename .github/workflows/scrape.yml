@@ -25,6 +25,9 @@ on:
         description: "Maps scroll depth (raise this if too few leads survive filtering)"
         required: false
         default: "5"
+      callback_url:
+        description: "n8n Wait-node resume URL for this run (from $execution.resumeUrl) — results get POSTed here"
+        required: true
 
 jobs:
   scrape:
@@ -44,7 +47,6 @@ jobs:
 
       - name: Run scraper pipeline
         env:
-          WEBHOOK_URL: ${{ secrets.N8N_WEBHOOK_URL }}
           SEEN_LOOKUP_URL: ${{ secrets.N8N_SEEN_LOOKUP_URL }}
         run: |
           python -m scraper.main \
@@ -53,7 +55,8 @@ jobs:
             --max-results "${{ inputs.max_results }}" \
             --min-rating "${{ inputs.min_rating }}" \
             --country "${{ inputs.country }}" \
-            --depth "${{ inputs.depth }}"
+            --depth "${{ inputs.depth }}" \
+            --webhook-url "${{ inputs.callback_url }}"
 
       - name: Upload leads as artifact
         uses: actions/upload-artifact@v4
