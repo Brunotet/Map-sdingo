@@ -70,10 +70,20 @@ def run(
             file=sys.stderr,
         )
 
-    print("[4/6] Enriching leads that have a social link but no email...", file=sys.stderr)
-    enriched = [enrich_business(b) for b in eligible]
+    print("[4/6] Emails: checking gosom + Maps description first, then FB/Instagram for the rest...", file=sys.stderr)
+    enriched = []
+    from_gosom = 0
+    for b in eligible:
+        gosom_email = b.pop("gosom_email", None)
+        if gosom_email:
+            b["email"] = gosom_email
+            b["_bio_text"] = None
+            from_gosom += 1
+            enriched.append(b)
+        else:
+            enriched.append(enrich_business(b))
     found = sum(1 for b in enriched if b.get("email"))
-    print(f"      -> email found for {found}/{len(enriched)} leads", file=sys.stderr)
+    print(f"      -> email found for {found}/{len(enriched)} leads ({from_gosom} from gosom/description, {found - from_gosom} from FB/IG)", file=sys.stderr)
 
     print("[5/6] Pulling business-level intent signals (bio phrasing, reviews, ad activity)...", file=sys.stderr)
     for b in enriched:

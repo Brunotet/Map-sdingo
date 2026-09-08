@@ -8,6 +8,7 @@ rather than building the Go binary — one less moving part.
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 
@@ -24,9 +25,34 @@ ENTRY_FIELD_MAP = {
     "cid": "cid",  # Google's own stable place ID — use THIS for dedup, never name/address
 }
 
+# Reuse the same email pattern as the enrichment module rather than duplicate it.
+from scraper.enrich import EMAIL_RE  # noqa: E402
+
+
+def _candidate_email_from_entry(entry: dict) -> str | None:
+    """
+    Two email sources that come for free with the Maps scrape itself,
+    checked before we ever make a separate FB/IG request:
+
+    1. gosom's own `emails` field (populated by the -email flag) — it
+       crawls whatever URL is in the "website" field, which for our
+       target businesses is very often their Facebook/Instagram link
+       anyway, using gosom's own (Go/goquery-based) extractor.
+    2. The Google Business Profile's own `description` text — some
+       businesses put an email straight in their Maps description.
+    """
+    emails = entry.get("emails")
+    if isinstance(emails, list) and emails:
+        return emails[0]
+
+    description = entry.get("description") or ""
+    m = EMAIL_RE.search(description)
+    return m.group(0) if m else None
+
 
 def _normalize(entry: dict) -> dict:
     out = {new: entry.get(old) for old, new in ENTRY_FIELD_MAP.items()}
+    out["gosom_email"] = _candidate_email_from_entry(entry)
     out["_raw"] = entry  # kept for internal signal extraction (e.g. review responses), stripped before final output
     return out
 
@@ -59,6 +85,7 @@ def scrape(niche: str, location: str, depth: int = 5, timeout_s: int = 600) -> l
             "-json",
             "-depth", str(depth),
             "-extra-reviews",
+            "-email",
             "-exit-on-inactivity", "3m",
         ]
 
