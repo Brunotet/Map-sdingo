@@ -1,0 +1,368 @@
+{
+  "name": "Wenlinco - Lead Scraper (All-in-One)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "niche",
+              "value": "hair salons",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "location",
+              "value": "Nelspruit",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "max_results",
+              "value": "50",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "min_rating",
+              "value": "3.5",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "country",
+              "value": "ZA",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "depth",
+              "value": "5",
+              "type": "string"
+            },
+            {
+              "id": "a7",
+              "name": "callback_url",
+              "value": "={{ $execution.resumeUrl }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-params-1",
+      "name": "Set Scrape Params",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        420,
+        300
+      ],
+      "notes": "Edit niche/location per run. callback_url is computed here (same pattern as your psychology-pipeline render_id workflow) \u2014 Wait node below resumes on this exact URL."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/Brunotet/Map-sdingo/actions/workflows/scrape.yml/dispatches",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"ref\": \"main\", \"inputs\": { \"niche\": $json.niche, \"location\": $json.location, \"max_results\": $json.max_results, \"min_rating\": $json.min_rating, \"country\": $json.country, \"depth\": $json.depth, \"callback_url\": $json.callback_url } } }}",
+        "options": {}
+      },
+      "id": "http-trigger-1",
+      "name": "Trigger GitHub Action",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        640,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Github Global"
+        }
+      },
+      "notes": "Reuses your existing 'Github Global' Header Auth credential \u2014 same one your other repos' dispatch calls use. Needs actions:write + contents:read on Map-sdingo."
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "httpMethod": "POST",
+        "responseCode": 200,
+        "responseMode": "onReceived",
+        "options": {
+          "webhookSuffix": "",
+          "limitWaitTime": true,
+          "limitType": "afterTimeInterval",
+          "resumeAmount": 45,
+          "resumeUnit": "minutes"
+        }
+      },
+      "id": "wait-1",
+      "name": "Wait For Scrape Result",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        860,
+        300
+      ],
+      "webhookId": "wait-scrape-result",
+      "notes": "Resumes when the GitHub Action POSTs its results to $execution.resumeUrl. 45 min ceiling \u2014 the Action itself times out at 40 min, so this gives it room to finish and still land here."
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "body.leads",
+        "options": {}
+      },
+      "id": "split-out-1",
+      "name": "Split Out Leads",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Flatten each lead into a flat row: join array fields into strings so they fit a single Sheet cell, and carry the niche/location through from the parent payload.\nconst niche = $('Wait For Scrape Result').first().json.body.niche;\nconst location = $('Wait For Scrape Result').first().json.body.location;\n\nreturn items.map(item => {\n  const l = item.json;\n  return {\n    json: {\n      niche,\n      location,\n      name: l.name,\n      phone: l.phone,\n      email: l.email || '',\n      website: l.website || '',\n      address: l.address,\n      category: l.category,\n      rating: l.rating,\n      review_count: l.review_count,\n      lead_score: l.lead_score,\n      website_intent_score: l.website_intent_score,\n      other_intents: Array.isArray(l.other_intents) ? l.other_intents.join(' | ') : (l.other_intents || ''),\n      intent_notes: l.intent_notes,\n      ad_status: l.ad_status,\n      ad_start_date: l.ad_start_date || '',\n      ad_running_days: l.ad_running_days,\n      dm_order_flow: l.dm_order_flow,\n      checkout_present: l.checkout_present,\n      owner_response_ratio: l.owner_response_ratio,\n      cid: l.cid,\n      maps_url: l.maps_url,\n      scraped_at: new Date().toISOString()\n    }\n  };\n});"
+      },
+      "id": "flatten-1",
+      "name": "Flatten For Sheet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "sheets-append-1",
+      "name": "Append Lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1520,
+        300
+      ],
+      "notes": "Set documentId to your actual Sheet ID. Header row should match the fields Flatten For Sheet produces \u2014 auto-map matches by header name."
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "seen-leads",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-seen-1",
+      "name": "Seen Leads Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        900
+      ],
+      "webhookId": "seen-leads",
+      "notes": "This URL is what you set as the N8N_SEEN_LOOKUP_URL secret in the GitHub repo. Called with ?niche=...&location=..."
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "sheets-read-1",
+      "name": "Read All Leads",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        420,
+        900
+      ],
+      "notes": "Same Sheet ID as the 'Receive Leads Into Sheet' workflow. Reads the whole sheet \u2014 fine at this scale, revisit if the sheet grows into the tens of thousands of rows."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Keep only rows matching this request's niche (and location, if you track leads per-location), then return just the cid column.\nconst niche = $('Seen Leads Webhook').first().json.query.niche;\nconst location = $('Seen Leads Webhook').first().json.query.location;\n\nconst ids = items\n  .filter(i => i.json.niche === niche && (!location || i.json.location === location))\n  .map(i => String(i.json.cid))\n  .filter(Boolean);\n\nreturn [{ json: { seen_ids: [...new Set(ids)] } }];"
+      },
+      "id": "filter-code-1",
+      "name": "Filter By Niche + Extract Cids",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-seen-1",
+      "name": "Respond With Seen Ids",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        860,
+        900
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Scrape Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Scrape Params": {
+      "main": [
+        [
+          {
+            "node": "Trigger GitHub Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger GitHub Action": {
+      "main": [
+        [
+          {
+            "node": "Wait For Scrape Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait For Scrape Result": {
+      "main": [
+        [
+          {
+            "node": "Split Out Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Leads": {
+      "main": [
+        [
+          {
+            "node": "Flatten For Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten For Sheet": {
+      "main": [
+        [
+          {
+            "node": "Append Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seen Leads Webhook": {
+      "main": [
+        [
+          {
+            "node": "Read All Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read All Leads": {
+      "main": [
+        [
+          {
+            "node": "Filter By Niche + Extract Cids",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter By Niche + Extract Cids": {
+      "main": [
+        [
+          {
+            "node": "Respond With Seen Ids",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -15,9 +15,13 @@ repo public** or you'll burn your 2,000 private-repo minutes instead.
 Every lead now gets ranked on **buying intent**, using business-level public
 signals only — never a personal profile:
 
-- **Is it running Meta ads right now?** — checked against the *public* Ad
-  Library website (facebook.com/ads/library, no login needed). Note: the
-  official Ad Library **API** only covers EU/UK commercial ads plus
+- **Is it running Meta ads right now — and for how long?** — checked
+  against the *public* Ad Library website (facebook.com/ads/library, no
+  login needed), queried separately for active vs. inactive ads so we get
+  a clean status: `active` (with a start date + days running, pulled from
+  the "Started running on" text on each ad card), `stopped` (ran ads
+  before, none currently — a re-engagement angle), or `none_found`. Note:
+  the official Ad Library **API** only covers EU/UK commercial ads plus
   worldwide political ads — South African commercial ads aren't in its
   scope as of 2026, so this queries the public site directly instead.
 - **Does its bio say "DM/WhatsApp to order"** instead of having a real
@@ -29,20 +33,20 @@ signals only — never a personal profile:
 
 Output columns added per lead:
 - `website_intent_score` — 1 to 10
-- `other_intents` — list of suggested services beyond "just a website" (e.g. ad management, WhatsApp order automation, reputation management)
+- `other_intents` — list of suggested services beyond "just a website" (e.g. ad management, WhatsApp order automation, reputation management, re-engagement)
 - `intent_notes` — plain-English reasons behind the score, so you're never guessing why a lead ranked where it did
-- `running_ads`, `dm_order_flow`, `checkout_present`, `owner_response_ratio` — the raw signals themselves, in case you want to re-rank with your own weighting later
+- `ad_status`, `ad_start_date`, `ad_running_days`, `dm_order_flow`, `checkout_present`, `owner_response_ratio` — the raw signals themselves, in case you want to re-rank with your own weighting later
 
 Run with `--skip-ad-library` for a faster run without the Playwright ad
-check (leaves `running_ads` as unknown / no ads-based score bump).
+check (leaves `ad_status` as `unknown` / no ads-based score bump).
 
 **Two honest caveats on this part specifically:**
 1. The Ad Library check scrapes a live Meta page whose layout can change —
    this build couldn't be tested against the real site (no route to
-   facebook.com from the sandbox it was built in). If `running_ads` comes
-   back `None` for everything on your first real run, open
-   `scraper/ad_library.py` and adjust the text markers to match what's
-   actually on the page.
+   facebook.com from the sandbox it was built in). If `ad_status` comes
+   back `unknown` for everything on your first real run, open
+   `scraper/ad_library.py` and adjust the text markers/date pattern to
+   match what's actually on the page.
 2. The owner-response-ratio signal depends on `gosom/google-maps-scraper`'s
    `-extra-reviews` output using a review field name this build guessed at
    (see the comment block in `scraper/signals.py`). Run once, inspect a raw
@@ -129,8 +133,10 @@ shape to your n8n webhook when done:
       "lead_score": 1.78,
       "website_intent_score": 8,
       "other_intents": ["Google/Meta ads management (already spending on ads, funnel needs a home)"],
-      "intent_notes": "running Meta ads with no landing page — likely leaking paid-traffic conversions; ...",
-      "running_ads": true,
+      "intent_notes": "running Meta ads for 45 days straight with no landing page — likely leaking paid-traffic conversions; ...",
+      "ad_status": "active",
+      "ad_start_date": "2026-07-25",
+      "ad_running_days": 45,
       "dm_order_flow": true,
       "checkout_present": false,
       "owner_response_ratio": 0.6

@@ -1,0 +1,68 @@
+{
+  "name": "Wenlinco - Trigger Lead Scrape",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "niche", "value": "hair salons", "type": "string" },
+            { "id": "a2", "name": "location", "value": "Nelspruit", "type": "string" },
+            { "id": "a3", "name": "max_results", "value": "50", "type": "string" },
+            { "id": "a4", "name": "min_rating", "value": "3.5", "type": "string" },
+            { "id": "a5", "name": "country", "value": "ZA", "type": "string" },
+            { "id": "a6", "name": "depth", "value": "5", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-params-1",
+      "name": "Set Scrape Params",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [420, 300],
+      "notes": "Edit these values (or wire this from a form/another workflow) before each run."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/Brunotet/Map-sdingo/actions/workflows/scrape.yml/dispatches",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/vnd.github+json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"ref\": \"main\", \"inputs\": { \"niche\": $json.niche, \"location\": $json.location, \"max_results\": $json.max_results, \"min_rating\": $json.min_rating, \"country\": $json.country, \"depth\": $json.depth } } }}",
+        "options": {}
+      },
+      "id": "http-trigger-1",
+      "name": "Trigger GitHub Action",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [640, 300],
+      "notes": "Uses an HTTP Header Auth credential named 'GitHub PAT' with header 'Authorization: Bearer <your fine-grained PAT>' — the token needs 'actions:write' + 'contents:read' scope on the Map-sdingo repo."
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Set Scrape Params", "type": "main", "index": 0 }]]
+    },
+    "Set Scrape Params": {
+      "main": [[{ "node": "Trigger GitHub Action", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" }
+}

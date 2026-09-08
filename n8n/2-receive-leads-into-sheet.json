@@ -1,0 +1,95 @@
+{
+  "name": "Wenlinco - Receive Leads Into Sheet",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "leads-received",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-receive-1",
+      "name": "Leads Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "leads-received",
+      "notes": "This URL is what you set as the N8N_WEBHOOK_URL secret in the GitHub repo."
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "body.leads",
+        "options": {}
+      },
+      "id": "split-out-1",
+      "name": "Split Out Leads",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Flatten each lead into a flat row: join array fields into strings so they fit a single Sheet cell, and carry the niche/location through from the parent payload.\nconst niche = $('Leads Webhook').first().json.body.niche;\nconst location = $('Leads Webhook').first().json.body.location;\n\nreturn items.map(item => {\n  const l = item.json;\n  return {\n    json: {\n      niche,\n      location,\n      name: l.name,\n      phone: l.phone,\n      email: l.email || '',\n      website: l.website || '',\n      address: l.address,\n      category: l.category,\n      rating: l.rating,\n      review_count: l.review_count,\n      lead_score: l.lead_score,\n      website_intent_score: l.website_intent_score,\n      other_intents: Array.isArray(l.other_intents) ? l.other_intents.join(' | ') : (l.other_intents || ''),\n      intent_notes: l.intent_notes,\n      running_ads: l.running_ads,\n      dm_order_flow: l.dm_order_flow,\n      checkout_present: l.checkout_present,\n      owner_response_ratio: l.owner_response_ratio,\n      cid: l.cid,\n      maps_url: l.maps_url,\n      scraped_at: new Date().toISOString()\n    }\n  };\n});"
+      },
+      "id": "flatten-1",
+      "name": "Flatten For Sheet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "sheets-append-1",
+      "name": "Append Lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [860, 300],
+      "notes": "Set documentId to your actual Sheet ID and confirm the tab is named 'Leads' (or change sheetName). Column headers in row 1 should match the field names produced by Flatten For Sheet — auto-map matches by header name."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"ok\", \"received\": $('Leads Webhook').first().json.body.count } }}",
+        "options": {}
+      },
+      "id": "respond-1",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1080, 300]
+    }
+  ],
+  "connections": {
+    "Leads Webhook": {
+      "main": [[{ "node": "Split Out Leads", "type": "main", "index": 0 }]]
+    },
+    "Split Out Leads": {
+      "main": [[{ "node": "Flatten For Sheet", "type": "main", "index": 0 }]]
+    },
+    "Flatten For Sheet": {
+      "main": [[{ "node": "Append Lead", "type": "main", "index": 0 }]]
+    },
+    "Append Lead": {
+      "main": [[{ "node": "Respond OK", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" }
+}

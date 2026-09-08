@@ -79,12 +79,14 @@ def run(
     for b in enriched:
         b.update(extract_bio_signals(b.pop("_bio_text", None)))
         b["owner_response_ratio"] = owner_response_ratio(b.pop("_raw", {}))
-        b["running_ads"] = None  # filled in below if the ad-library check runs
+        b["ad_status"] = "unknown"  # filled in below if the ad-library check runs
+        b["ad_start_date"] = None
+        b["ad_running_days"] = None
 
     if not skip_ad_library:
         _run_ad_library_checks(enriched, country=country)
     else:
-        print("      -> --skip-ad-library set, running_ads left as unknown for all leads", file=sys.stderr)
+        print("      -> --skip-ad-library set, ad_status left as unknown for all leads", file=sys.stderr)
 
     print("[6/6] Scoring website intent (1-10) + suggesting other service intents...", file=sys.stderr)
     for b in enriched:
@@ -108,12 +110,14 @@ def _run_ad_library_checks(businesses: list[dict], country: str):
             checked = 0
             for b in businesses:
                 result = check_active_ads(page, b["name"], country=country)
-                b["running_ads"] = result["running_ads"]
+                b["ad_status"] = result["ad_status"]
+                b["ad_start_date"] = result["ad_start_date"]
+                b["ad_running_days"] = result["ad_running_days"]
                 checked += result["checked"]
             browser.close()
         print(f"      -> ad-library check completed for {checked}/{len(businesses)} leads", file=sys.stderr)
     except Exception as e:
-        print(f"      WARNING: ad-library check failed entirely ({e}). running_ads left as unknown.", file=sys.stderr)
+        print(f"      WARNING: ad-library check failed entirely ({e}). ad_status left as unknown.", file=sys.stderr)
 
 
 def send_webhook(url: str, niche: str, location: str, leads: list[dict]):
