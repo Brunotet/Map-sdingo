@@ -35,6 +35,7 @@ def parse_args():
     p.add_argument("--max-results", type=int, default=50)
     p.add_argument("--min-rating", type=float, default=3.5)
     p.add_argument("--depth", type=int, default=5, help="Maps scroll depth — raise if too few eligible leads survive filtering")
+    p.add_argument("--scrape-timeout", type=int, default=2700, help="Seconds to let the gosom Docker scrape run before giving up (separate from the Action's own job timeout)")
     p.add_argument("--webhook-url", default=os.environ.get("WEBHOOK_URL"))
     p.add_argument("--seen-lookup-url", default=os.environ.get("SEEN_LOOKUP_URL"))
     p.add_argument("--skip-ad-library", action="store_true", help="Skip the Playwright ad-library check (faster, no running_ads signal)")
@@ -51,9 +52,10 @@ def run(
     seen_lookup_url: str | None = None,
     country: str = "ZA",
     skip_ad_library: bool = False,
+    scrape_timeout: int = 2700,
 ) -> list[dict]:
-    print(f"[1/6] Scraping Google Maps for '{niche} in {location}' (depth={depth})...", file=sys.stderr)
-    raw = scrape(niche, location, depth=depth)
+    print(f"[1/6] Scraping Google Maps for '{niche} in {location}' (depth={depth}, timeout={scrape_timeout}s)...", file=sys.stderr)
+    raw = scrape(niche, location, depth=depth, timeout_s=scrape_timeout)
     print(f"      -> {len(raw)} raw listings", file=sys.stderr)
 
     print("[2/6] Checking which ones you already have in n8n...", file=sys.stderr)
@@ -148,6 +150,7 @@ def main():
         args.seen_lookup_url,
         args.country,
         args.skip_ad_library,
+        args.scrape_timeout,
     )
 
     with open(args.out, "w", encoding="utf-8") as f:

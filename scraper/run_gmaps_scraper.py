@@ -57,10 +57,22 @@ def _normalize(entry: dict) -> dict:
     return out
 
 
-def scrape(niche: str, location: str, depth: int = 5, timeout_s: int = 600) -> list[dict]:
+def scrape(niche: str, location: str, depth: int = 5, timeout_s: int = 2700) -> list[dict]:
     """
     Runs the scraper for "{niche} in {location}" and returns a list of
     normalized business dicts. Requires Docker to be available on the runner.
+
+    timeout_s default raised from the original 600s (10 min) to 2700s
+    (45 min) — that original value was set before `-extra-reviews` and
+    `-email` were added. Both make gosom visit each business individually
+    (reviews via DOM-scroll when Google's RPC endpoint 403s, which it does
+    fairly often; website crawling for -email), so a depth=5 run can
+    legitimately take well past 10 minutes now. This is a SEPARATE timeout
+    from the GitHub Actions job-level timeout-minutes in scrape.yml — that
+    one bounds the whole job, this one bounds just this subprocess call.
+    Keep this comfortably under the job timeout (currently 55 min) so a
+    real timeout here still lets the job report a clean error instead of
+    both firing at once.
     """
     query = f"{niche} in {location}".strip()
 
