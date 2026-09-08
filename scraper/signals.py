@@ -39,26 +39,27 @@ def extract_bio_signals(bio_text: str | None) -> dict:
     }
 
 
-# --- Review-response signal (best-effort, schema not fully confirmed) ------
+# --- Review-response signal ------------------------------------------------
 #
-# HONEST CAVEAT: gosom/google-maps-scraper's `-extra-reviews` flag returns a
-# reviews array on each entry, but its exact field name for "owner replied
-# to this review" hasn't been verified against a live run in this build
-# (this repo was built without network access to google.com to test
-# against). The candidate keys below are best guesses from the tool's
-# public docs. Run the scraper once with -extra-reviews, inspect one raw
-# entry's JSON, and adjust RAW_REVIEWS_KEYS / OWNER_RESPONSE_KEYS below to
-# match what you actually see — this function fails safe (returns None,
-# not a wrong answer) if it can't find the field.
+# CONFIRMED (2026) against gosom/google-maps-scraper's actual Go struct
+# (gmaps package, pkg.go.dev): Entry.UserReviewsExtended is what
+# `-extra-reviews` populates (json key "user_reviews_extended"; the
+# smaller default set is "user_reviews"), and each Review's owner-reply
+# text is Review.ReplyText (json key "reply_text", omitempty — absent
+# entirely when the owner never replied, not present-but-empty). Earlier
+# guesses ("owner_response", "response", "reply", etc.) never matched
+# that field, which is why every business was coming back with a
+# 0.0 ratio instead of a genuine mix — a 0.0 wasn't "nobody replies",
+# it was "the code was checking the wrong key on every review."
 
-RAW_REVIEWS_KEYS = ["reviews", "user_reviews", "extra_reviews"]
-OWNER_RESPONSE_KEYS = ["owner_response", "response_from_owner_text", "response", "reply"]
+RAW_REVIEWS_KEYS = ["user_reviews_extended", "user_reviews"]
+OWNER_RESPONSE_KEYS = ["reply_text", "reply_text_original"]
 
 
 def owner_response_ratio(raw_entry: dict) -> float | None:
     reviews = None
     for key in RAW_REVIEWS_KEYS:
-        if key in raw_entry and isinstance(raw_entry[key], list):
+        if key in raw_entry and isinstance(raw_entry[key], list) and raw_entry[key]:
             reviews = raw_entry[key]
             break
     if not reviews:
