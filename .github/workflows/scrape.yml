@@ -28,11 +28,15 @@ on:
       callback_url:
         description: "n8n Wait-node resume URL for this run (from $execution.resumeUrl) — results get POSTed here"
         required: true
+      scrape_timeout:
+        description: "Max seconds to let the Maps scrape itself run (separate from this job's overall timeout)"
+        required: false
+        default: "2700"
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
 
@@ -56,6 +60,7 @@ jobs:
             --min-rating "${{ inputs.min_rating }}" \
             --country "${{ inputs.country }}" \
             --depth "${{ inputs.depth }}" \
+            --scrape-timeout "${{ inputs.scrape_timeout }}" \
             --webhook-url "${{ inputs.callback_url }}"
 
       - name: Upload leads as artifact
