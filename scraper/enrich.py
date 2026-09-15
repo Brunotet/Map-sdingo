@@ -15,8 +15,8 @@ import re
 import time
 import requests
 from urllib.parse import urlparse, urlunparse
+from scraper.email_utils import EMAIL_RE, extract_email_from_html  # noqa: F401 (EMAIL_RE re-exported for other modules)
 
-EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 FB_LINK_RE = re.compile(r'https?://(?:www\.|web\.|m\.)?facebook\.com/[^\s"\'<>]+', re.IGNORECASE)
 IG_LINK_RE = re.compile(r'https?://(?:www\.)?instagram\.com/[^\s"\'<>]+', re.IGNORECASE)
 HEADERS = {
@@ -28,10 +28,10 @@ HEADERS = {
 
 
 def _extract_email(text: str) -> str | None:
-    matches = EMAIL_RE.findall(text)
-    # filter out common false positives (image/js asset filenames etc.)
-    matches = [m for m in matches if not m.lower().endswith((".png", ".jpg", ".svg", ".js", ".css"))]
-    return matches[0] if matches else None
+    # kept as a thin wrapper so nothing importing this name breaks — now
+    # backed by the shared extractor, which also catches Cloudflare-
+    # obfuscated emails that this used to silently miss.
+    return extract_email_from_html(text)
 
 
 def _to_mobile_facebook_url(fb_url: str) -> str:

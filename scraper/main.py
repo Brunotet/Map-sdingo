@@ -25,6 +25,7 @@ from scraper.enrich import enrich_business
 from scraper.dedup import fetch_seen_cids
 from scraper.signals import extract_bio_signals, owner_response_ratio
 from scraper.intent import score_intent
+from scraper.web_discovery import find_social_link, find_directory_email
 
 
 def parse_args():
@@ -54,15 +55,15 @@ def run(
     skip_ad_library: bool = False,
     scrape_timeout: int = 2700,
 ) -> list[dict]:
-    print(f"[1/6] Scraping Google Maps for '{niche} in {location}' (depth={depth}, timeout={scrape_timeout}s)...", file=sys.stderr)
+    print(f"[1/8] Scraping Google Maps for '{niche} in {location}' (depth={depth}, timeout={scrape_timeout}s)...", file=sys.stderr)
     raw = scrape(niche, location, depth=depth, timeout_s=scrape_timeout)
     print(f"      -> {len(raw)} raw listings", file=sys.stderr)
 
-    print("[2/6] Checking which ones you already have in n8n...", file=sys.stderr)
+    print("[2/8] Checking which ones you already have in n8n...", file=sys.stderr)
     seen_cids = fetch_seen_cids(seen_lookup_url, niche, location)
     print(f"      -> {len(seen_cids)} already-used business IDs on record for this niche", file=sys.stderr)
 
-    print("[3/6] Filtering (no-website + review activity + not-already-used) and scoring...", file=sys.stderr)
+    print("[3/8] Filtering (no-website + review activity + not-already-used) and scoring...", file=sys.stderr)
     eligible = filter_and_sort(raw, max_results=max_results, min_rating=min_rating, seen_cids=seen_cids)
     print(f"      -> {len(eligible)} fresh eligible leads (capped at {max_results})", file=sys.stderr)
     if len(eligible) < max_results:
@@ -72,7 +73,17 @@ def run(
             file=sys.stderr,
         )
 
-    print("[4/6] Emails: checking gosom + Maps description first, then FB/Instagram for the rest...", file=sys.stderr)
+    print("[4/8] For leads with nothing at all on Maps, searching the web for a social page...", file=sys.stderr)
+    discovered = 0
+    for b in eligible:
+        if not b.get("gosom_email") and not (b.get("website") or "").strip():
+            found = find_social_link(b["name"], location)
+            if found:
+                b["website"] = found
+                discovered += 1
+    print(f"      -> found a Facebook/Instagram page for {discovered}/{len(eligible)} leads that had nothing linked on Maps", file=sys.stderr)
+
+    print("[5/8] Emails: checking gosom + Maps description first, then FB/Instagram for the rest...", file=sys.stderr)
     enriched = []
     from_gosom = 0
     for b in eligible:
@@ -87,10 +98,25 @@ def run(
     found = sum(1 for b in enriched if b.get("email"))
     print(f"      -> email found for {found}/{len(enriched)} leads ({from_gosom} from gosom/description, {found - from_gosom} from FB/IG)", file=sys.stderr)
 
-    print("[5/6] Pulling business-level intent signals (bio phrasing, reviews, ad activity)...", file=sys.stderr)
+    print("[6/8] Emails: last resort — checking SA business directories for leads still missing one...", file=sys.stderr)
+    still_missing = [b for b in enriched if not b.get("email")]
+    from_directory = 0
+    for b in still_missing:
+        email = find_directory_email(b["name"], location)
+        if email:
+            b["email"] = email
+            from_directory += 1
+    print(f"      -> found {from_directory}/{len(still_missing)} remaining leads' emails via business directories", file=sys.stderr)
+
+    print("[7/8] Pulling business-level intent signals (bio phrasing, reviews, ad activity)...", file=sys.stderr)
     for b in enriched:
         b.update(extract_bio_signals(b.pop("_bio_text", None)))
         b["owner_response_ratio"] = owner_response_ratio(b.pop("_raw", {}))
+        website = b.get("website") or ""
+        if "wa.me" in website or "whatsapp.com" in website:
+            # their ONLY listed "website" is a WhatsApp chat link — that's an
+            # even more direct DM-order signal than finding the phrase in a bio
+            b["dm_order_flow"] = True
         b["ad_status"] = "unknown"  # filled in below if the ad-library check runs
         b["ad_start_date"] = None
         b["ad_running_days"] = None
@@ -100,7 +126,7 @@ def run(
     else:
         print("      -> --skip-ad-library set, ad_status left as unknown for all leads", file=sys.stderr)
 
-    print("[6/6] Scoring website intent (1-10) + suggesting other service intents...", file=sys.stderr)
+    print("[8/8] Scoring website intent (1-10) + suggesting other service intents...", file=sys.stderr)
     for b in enriched:
         b.update(score_intent(b))
 

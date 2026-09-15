@@ -25,8 +25,8 @@ ENTRY_FIELD_MAP = {
     "cid": "cid",  # Google's own stable place ID — use THIS for dedup, never name/address
 }
 
-# Reuse the same email pattern as the enrichment module rather than duplicate it.
-from scraper.enrich import EMAIL_RE  # noqa: E402
+# Reuse the shared email pattern rather than duplicate it.
+from scraper.email_utils import EMAIL_RE
 
 
 def _candidate_email_from_entry(entry: dict) -> str | None:
