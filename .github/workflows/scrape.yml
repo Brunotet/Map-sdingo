@@ -32,6 +32,10 @@ on:
         description: "Max seconds to let the Maps scrape itself run (separate from this job's overall timeout)"
         required: false
         default: "2700"
+      skip_directory:
+        description: "Set to 'true' to skip the Yellosa directory entirely and go straight to Google Maps"
+        required: false
+        default: "false"
 
 jobs:
   scrape:
@@ -61,7 +65,8 @@ jobs:
             --country "${{ inputs.country }}" \
             --depth "${{ inputs.depth }}" \
             --scrape-timeout "${{ inputs.scrape_timeout }}" \
-            --webhook-url "${{ inputs.callback_url }}"
+            --webhook-url "${{ inputs.callback_url }}" \
+            $( [ "${{ inputs.skip_directory }}" = "true" ] && echo "--skip-directory" )
 
       - name: Upload leads as artifact
         uses: actions/upload-artifact@v4
