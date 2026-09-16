@@ -12,6 +12,51 @@ starting points on the same canvas:
 
 Import just this one file: Workflows → Import from File.
 
+## Source order (changed) — now worldwide (140 countries)
+
+The `country` field you're already sending (it also drives the Ad
+Library check) now picks which business directory runs as the
+**primary** source before Google Maps kicks in as the **fallback**.
+
+Two networks cover most of the world between them:
+
+- **MisterWhat** — 12 countries (`GB` verified directly; `US`, `AU`,
+  `FR`, `DE`, `NL`, `DK`, `PL`, `PT`, `BR`, `AR`, `CA` same platform,
+  unverified beyond that). Email is NOT login-gated here — genuinely
+  better for email specifically where it applies.
+- **"Global Business Directory" network** — confirmed to run ~136
+  country-specific sites on identical software (Yellosa for South
+  Africa is one of them). 128 countries wired up — everywhere from
+  Nigeria and Kenya to India, most of Europe, the Middle East, and
+  Latin America. `ZA` and `NG` verified directly; the rest ride on
+  "same confirmed platform" confidence. Email IS login-gated here
+  (same as Yellosa was) — worse for email specifically, but covers far
+  more ground and gives richer per-listing data either way (VAT
+  number, employee band, established year).
+
+Full registry (both dicts) lives at the top of `scraper/directory_source.py`.
+Any country not in either dict skips the directory step and goes
+straight to Maps for that run — nothing breaks, it just doesn't get the
+speed/richness boost.
+
+Directory-sourced leads are plain HTTP (no Docker/Playwright for this
+part) and don't share Maps' rate limits. Maps only runs for the
+shortfall if the directory doesn't reach `max_results` on its own —
+check the Action's `[2/7]`/`[3/7]` log lines to see the split each run,
+and the `source` column in the Sheet (`yellosa` / `businesslist` /
+`misterwhat` / `gmaps` / etc.) to see where each lead actually came from.
+
+**To confirm a currently-unverified country before relying on it
+regularly:** fetch a real category page and a real company page on that
+country's domain yourself (same way ZA, NG, and GB were checked) — if
+the structure matches, it already works as-is.
+
+If a niche has no good directory category match at all, add
+`skip_directory: "true"` as a workflow_dispatch input (via the GitHub API
+call, or add a `skip_directory` field to `Set Scrape Params` and wire it
+into the dispatch payload the same way `depth`/`country` are) to go
+straight to Maps for that run.
+
 ## One-time config
 
 **Credentials**
@@ -24,10 +69,11 @@ Import just this one file: Workflows → Import from File.
 
 **Google Sheet**
 - Tab named `Leads`, header row (**tailored final list — paste this exact row into row 1**):
-  `niche, location, name, phone, email, website, address, category, rating,
+  `niche, location, source, name, phone, email, website, address, category, rating,
   review_count, lead_score, website_intent_score, other_intents,
   intent_notes, ad_status, ad_start_date, ad_running_days, dm_order_flow,
   checkout_present, owner_response_ratio, cid, maps_url, scraped_at`
+  - `source` — `yellosa` (directory, now the primary source) or `gmaps` (Maps, now the fallback — only used when the directory doesn't reach `max_results` on its own)
   - `ad_status` — `active` / `stopped` / `none_found` / `unknown`
   - `ad_start_date` — when their current campaign began (only set if `ad_status` is `active`)
   - `ad_running_days` — how many days it's been running (only set if `active`)
@@ -37,7 +83,10 @@ Import just this one file: Workflows → Import from File.
   (not "Map Each Column Manually") — it matches incoming fields to your
   header row by name. "Map Each Column Manually" needs every field typed
   in by hand and is where the "At least one value has to be added under
-  'Values to Send'" error comes from if it's left on defaults.
+  'Values to Send'" error comes from if it's left on defaults. If you're
+  already on manual mapping from an earlier setup, just add `source` as
+  one more field there too — same pattern as adding `whatsapp_message`
+  earlier.
 
 **GitHub secret** — one only:
 - Activate the whole workflow (top-right toggle) so the webhook branch is

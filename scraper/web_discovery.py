@@ -92,16 +92,24 @@ def find_social_link(business_name: str, location: str, timeout: int = 10) -> st
 
 def find_directory_email(business_name: str, location: str, timeout: int = 10, delay: float = 1.5) -> str | None:
     """
-    Searches known SA business directories for a listing matching this
-    business, fetches the first matching page, and extracts an email
-    (including Cloudflare-obfuscated ones — directories are exactly the
-    kind of site that uses that protection). Tries each directory in
-    SA_DIRECTORY_SITES in order, stops at the first email found.
+    NOT CURRENTLY CALLED ANYWHERE IN THE PIPELINE — kept for reference,
+    not wired into main.py.
 
-    This is a LAST-RESORT step in the pipeline (main.py only calls it for
-    leads still missing an email after gosom, the Maps description, and
-    FB/IG) — it costs a search + a page fetch per directory tried, so it's
-    reserved for leads that genuinely have nothing else.
+    Both directories originally listed here were checked directly against
+    their live sites and found not to work for this purpose:
+      - Yellosa.co.za: emails ARE collected per listing, but confirmed
+        gated behind a required sign-in ("Show Email" links to
+        /sign-in/email:<id>) — not freely scrapable. (Yellosa is now used
+        differently — as the PRIMARY lead source in directory_source.py,
+        for its freely-visible fields: phone, address, website, business
+        description, etc. — just not for the email specifically.)
+      - thebusinessdirectory.co.za: has active bot detection that blocks
+        automated page fetches outright.
+
+    Left in place in case a genuinely open SA directory turns up later —
+    add it to SA_DIRECTORY_SITES and this function should work as
+    written, but verify against the live site first (view a real listing
+    page yourself) rather than assuming it behaves like these two did.
     """
     for site in SA_DIRECTORY_SITES:
         query = f"{business_name} {location} site:{site}"

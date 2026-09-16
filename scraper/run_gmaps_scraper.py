@@ -53,6 +53,7 @@ def _candidate_email_from_entry(entry: dict) -> str | None:
 def _normalize(entry: dict) -> dict:
     out = {new: entry.get(old) for old, new in ENTRY_FIELD_MAP.items()}
     out["gosom_email"] = _candidate_email_from_entry(entry)
+    out["source"] = "gmaps"
     out["_raw"] = entry  # kept for internal signal extraction (e.g. review responses), stripped before final output
     return out
 

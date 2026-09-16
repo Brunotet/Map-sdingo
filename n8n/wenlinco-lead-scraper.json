@@ -57,6 +57,12 @@
               "name": "callback_url",
               "value": "={{ $execution.resumeUrl }}",
               "type": "string"
+            },
+            {
+              "id": "a8",
+              "name": "scrape_timeout",
+              "value": "2700",
+              "type": "string"
             }
           ]
         },
@@ -89,7 +95,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ { \"ref\": \"main\", \"inputs\": { \"niche\": $json.niche, \"location\": $json.location, \"max_results\": $json.max_results, \"min_rating\": $json.min_rating, \"country\": $json.country, \"depth\": $json.depth, \"callback_url\": $json.callback_url } } }}",
+        "jsonBody": "={{ { \"ref\": \"main\", \"inputs\": { \"niche\": $json.niche, \"location\": $json.location, \"max_results\": $json.max_results, \"min_rating\": $json.min_rating, \"country\": $json.country, \"depth\": $json.depth, \"scrape_timeout\": $json.scrape_timeout, \"callback_url\": $json.callback_url } } }}",
         "options": {}
       },
       "id": "http-trigger-1",
@@ -117,7 +123,7 @@
           "webhookSuffix": "",
           "limitWaitTime": true,
           "limitType": "afterTimeInterval",
-          "resumeAmount": 45,
+          "resumeAmount": 85,
           "resumeUnit": "minutes"
         }
       },
@@ -130,7 +136,7 @@
         300
       ],
       "webhookId": "wait-scrape-result",
-      "notes": "Resumes when the GitHub Action POSTs its results to $execution.resumeUrl. 45 min ceiling \u2014 the Action itself times out at 40 min, so this gives it room to finish and still land here."
+      "notes": "Resumes when the GitHub Action POSTs its results to $execution.resumeUrl. 85 min ceiling \u2014 the Action's job timeout is 75 min (raised again since -extra-reviews' DOM-scroll fallback and -email crawling both add real time per business), so this gives it room to finish and still land here."
     },
     {
       "parameters": {
@@ -148,7 +154,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Flatten each lead into a flat row: join array fields into strings so they fit a single Sheet cell, and carry the niche/location through from the parent payload.\nconst niche = $('Wait For Scrape Result').first().json.body.niche;\nconst location = $('Wait For Scrape Result').first().json.body.location;\n\nreturn items.map(item => {\n  const l = item.json;\n  return {\n    json: {\n      niche,\n      location,\n      name: l.name,\n      phone: l.phone,\n      email: l.email || '',\n      website: l.website || '',\n      address: l.address,\n      category: l.category,\n      rating: l.rating,\n      review_count: l.review_count,\n      lead_score: l.lead_score,\n      website_intent_score: l.website_intent_score,\n      other_intents: Array.isArray(l.other_intents) ? l.other_intents.join(' | ') : (l.other_intents || ''),\n      intent_notes: l.intent_notes,\n      ad_status: l.ad_status,\n      ad_start_date: l.ad_start_date || '',\n      ad_running_days: l.ad_running_days,\n      dm_order_flow: l.dm_order_flow,\n      checkout_present: l.checkout_present,\n      owner_response_ratio: l.owner_response_ratio,\n      cid: l.cid,\n      maps_url: l.maps_url,\n      scraped_at: new Date().toISOString()\n    }\n  };\n});"
+        "jsCode": "// Flatten each lead into a flat row: join array fields into strings so they fit a single Sheet cell, and carry the niche/location through from the parent payload.\nconst niche = $('Wait For Scrape Result').first().json.body.niche;\nconst location = $('Wait For Scrape Result').first().json.body.location;\n\nreturn items.map(item => {\n  const l = item.json;\n  return {\n    json: {\n      niche,\n      location,\n      source: l.source || '',\n      name: l.name,\n      phone: l.phone,\n      email: l.email || '',\n      website: l.website || '',\n      address: l.address,\n      category: l.category,\n      rating: l.rating,\n      review_count: l.review_count,\n      lead_score: l.lead_score,\n      website_intent_score: l.website_intent_score,\n      other_intents: Array.isArray(l.other_intents) ? l.other_intents.join(' | ') : (l.other_intents || ''),\n      intent_notes: l.intent_notes,\n      ad_status: l.ad_status,\n      ad_start_date: l.ad_start_date || '',\n      ad_running_days: l.ad_running_days,\n      dm_order_flow: l.dm_order_flow,\n      checkout_present: l.checkout_present,\n      owner_response_ratio: l.owner_response_ratio,\n      cid: l.cid,\n      maps_url: l.maps_url,\n      scraped_at: new Date().toISOString()\n    }\n  };\n});"
       },
       "id": "flatten-1",
       "name": "Flatten For Sheet",
@@ -176,7 +182,9 @@
           "mappingMode": "autoMapInputData",
           "value": {}
         },
-        "options": {}
+        "options": {
+          "valueInputMode": "RAW"
+        }
       },
       "id": "sheets-append-1",
       "name": "Append Lead",
@@ -186,7 +194,7 @@
         1520,
         300
       ],
-      "notes": "Set documentId to your actual Sheet ID. Header row should match the fields Flatten For Sheet produces \u2014 auto-map matches by header name."
+      "notes": "Value Input Mode set to RAW so nothing (phone numbers starting with '+', the long numeric cid) gets misread as a formula or auto-converted to a number. USER_ENTERED (n8n's default) tries to interpret values the way a human typing them would, which is exactly what breaks '+27...' phone numbers into #ERROR!."
     },
     {
       "parameters": {
@@ -258,6 +266,143 @@
         860,
         900
       ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-has-email",
+              "leftValue": "={{ $json.email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-email-1",
+      "name": "Has Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        300
+      ],
+      "notes": "True (output 0) = has email, skip WhatsApp drafting entirely. False (output 1) = no email, draft a WhatsApp message instead. Only ever one or the other, never both, per your instruction."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "nd1",
+              "name": "whatsapp_message",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "nd2",
+              "name": "message_angle",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "nd3",
+              "name": "wa_link",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-no-draft-1",
+      "name": "No Draft Needed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1520,
+        200
+      ],
+      "notes": "Has an email already \u2014 leave these three columns blank rather than draft a WhatsApp message, per your instruction: email leads get put aside, not double-worked."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build a tailored prompt from THIS business's own signals \u2014 no generic template text,\n// Gemini writes the actual message content from what the scraper found.\nconst l = $json;\n\nconst prompt = `You are writing a first-contact WhatsApp message on behalf of Wenlinco, a South African web design and digital marketing agency, reaching out to a local business that does not currently have a real website.\n\nBusiness details:\n- Name: ${l.name}\n- Category: ${l.category}\n- Niche searched: ${l.niche}\n- Location: ${l.location}\n- Website intent score (1-10, how likely they need a website): ${l.website_intent_score}\n- Suggested other services: ${l.other_intents}\n- Signals noticed: ${l.intent_notes}\n- Currently running Meta ads: ${l.ad_status}${l.ad_running_days ? ' (' + l.ad_running_days + ' days)' : ''}\n- Sells informally via DM/WhatsApp: ${l.dm_order_flow}\n\nWrite a SHORT WhatsApp opening message (2-4 sentences max) that:\n- Sounds like a real person messaging them, not a mass broadcast\n- Mentions something SPECIFIC and true about their business from the signals above \u2014 never invent details not given\n- Briefly introduces Wenlinco and the ONE most relevant service angle based on the signals\n- Ends with a low-pressure, easy-to-answer question, not a hard sell\n- Uses at most one emoji, optional\n- Friendly, professional South African tone\n\nRespond with ONLY valid JSON, no markdown fences, in this exact shape:\n{\"message\": \"the message text\", \"angle\": \"a short phrase naming which service angle you used, e.g. 'website + ads funnel' or 'whatsapp ordering automation'\"}`;\n\nreturn { json: { ...l, gemini_prompt: prompt } };",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "code-build-prompt-1",
+      "name": "Build Gemini Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"contents\": [ { \"parts\": [ { \"text\": $json.gemini_prompt } ] } ], \"generationConfig\": { \"temperature\": 0.7 } } }}",
+        "options": {}
+      },
+      "id": "http-gemini-1",
+      "name": "Draft WhatsApp Message (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1740,
+        420
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Gemini API Key"
+        }
+      },
+      "notes": "Credential: HTTP Header Auth, header name 'x-goog-api-key', value = your Gemini API key from Google AI Studio (free tier). Model name assumes gemini-2.0-flash \u2014 change to whatever model your other Gemini pipelines already use if different."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pull the original lead fields back from the prompt-building step (the HTTP Request node's\n// output only contains Gemini's response, not our lead data), parse Gemini's JSON reply,\n// and build the tap-to-send wa.me link.\nconst original = $('Build Gemini Prompt').item.json;\nconst geminiResponse = $json;\n\nlet raw = '';\ntry {\n  raw = geminiResponse.candidates[0].content.parts[0].text || '';\n} catch (e) {\n  raw = '';\n}\nraw = raw.replace(/^```json\\s*/i, '').replace(/```\\s*$/i, '').trim();\n\nlet parsed = { message: '', angle: '' };\ntry {\n  parsed = JSON.parse(raw);\n} catch (e) {\n  parsed = { message: raw, angle: 'unparsed' };\n}\n\nconst digitsOnly = (original.phone || '').replace(/[^\\d]/g, '');\nconst waLink = digitsOnly\n  ? `https://wa.me/${digitsOnly}?text=${encodeURIComponent(parsed.message || '')}`\n  : '';\n\nconst { gemini_prompt, ...cleanOriginal } = original;\n\nreturn {\n  json: {\n    ...cleanOriginal,\n    whatsapp_message: parsed.message || '',\n    message_angle: parsed.angle || '',\n    wa_link: waLink,\n  }\n};",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "code-parse-draft-1",
+      "name": "Parse Draft + Build WA Link",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "merge-branches-1",
+      "name": "Merge Branches",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2180,
+        300
+      ],
+      "notes": "Recombines the 'has email, no draft' rows and the 'no email, drafted' rows into one list before writing to the Sheet. Merge node's UI has changed across n8n versions \u2014 if 'append' mode isn't what you see, pick whichever option just concatenates both inputs into one list (not a field-matching join)."
     }
   ],
   "connections": {
@@ -320,7 +465,7 @@
       "main": [
         [
           {
-            "node": "Append Lead",
+            "node": "Has Email?",
             "type": "main",
             "index": 0
           }
@@ -354,6 +499,79 @@
         [
           {
             "node": "Respond With Seen Ids",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Email?": {
+      "main": [
+        [
+          {
+            "node": "No Draft Needed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Gemini Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Draft Needed": {
+      "main": [
+        [
+          {
+            "node": "Merge Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Gemini Prompt": {
+      "main": [
+        [
+          {
+            "node": "Draft WhatsApp Message (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft WhatsApp Message (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Parse Draft + Build WA Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Draft + Build WA Link": {
+      "main": [
+        [
+          {
+            "node": "Merge Branches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Branches": {
+      "main": [
+        [
+          {
+            "node": "Append Lead",
             "type": "main",
             "index": 0
           }

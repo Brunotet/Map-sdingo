@@ -1,10 +1,17 @@
 # Wenlinco Maps Lead Scraper
 
-n8n sends a niche + location → this repo scrapes Google Maps, keeps only
-businesses with **no real website** (a Facebook/Instagram link still
-counts as "no website"), scores them by review activity + how easy they'll
-be to reach (phone/social/email found), caps it at the top N (default 50),
-best-effort enriches emails from any linked FB/IG page, and posts the
+n8n sends a niche + location + country → this repo scrapes a business
+directory for that country FIRST (primary source — plain HTTP, richer
+per-listing data, no Docker needed for this part; South Africa uses
+Yellosa, twelve other countries use MisterWhat's local domains — see
+`scraper/directory_source.py` for the full registry), falls back to
+Google Maps only for whatever shortfall remains (or entirely, for any
+country with no directory registered), keeps only businesses with **no
+real website** (a Facebook/Instagram link still counts as "no website"),
+scores them by review activity + how easy they'll be to reach
+(phone/social/email found), caps it at the top N (default 50), enriches
+emails from multiple free sources (gosom's own crawl, the listing's own
+description text, FB/IG bio, cross-platform follow), and posts the
 result straight back to an n8n webhook.
 
 Runs entirely on GitHub Actions' free public-repo runners — **keep this
@@ -157,14 +164,40 @@ pip install -r requirements.txt
 python -m scraper.main --niche "coffee shops" --location "Cape Town" --max-results 10
 ```
 
+## Email sources (checked in this order, cheapest first)
+
+1. **gosom's own `-email` extraction** — crawls whatever's in the Maps
+   "website" field (often a Facebook/Instagram link for our leads) with
+   its own Go-based extractor.
+2. **The Maps listing's own `description` text** — some businesses put an
+   email straight in their Google Business Profile description. Free —
+   already scraped, no extra request.
+3. **Facebook or Instagram bio** — whichever platform the "website" field
+   pointed to, fetched directly.
+4. **Cross-platform follow** — if that page's bio links to the *other*
+   platform (common — businesses cross-link FB↔IG even when only one is
+   registered with Google) and we still don't have an email, that gets
+   followed too.
+
+Only leads still empty after (1) and (2) trigger any FB/IG network
+request at all — cheaper and faster than hitting every lead's socials
+regardless.
+
 ## Honest limitations
 
-- **Email enrichment is best-effort.** Facebook/Instagram gate most data
-  behind a login wall for non-logged-in requests — this pulls whatever's
-  visible in the public bio/meta tags, which is often nothing. Expect a
-  real hit rate somewhere well under 50%, especially on Instagram. Phone
-  (from Maps directly) is far more reliable — plan your outreach sequence
-  around that, with email as a bonus when it's there.
+- **Email coverage is still not guaranteed, even with four sources.**
+  Facebook/Instagram gate most data behind a login wall for non-logged-in
+  requests (sources 3-4 above) — that part remains best-effort. Sources 1-2
+  don't have that problem since they're either gosom's own crawl or data
+  Google already made public, so overall hit rate should be meaningfully
+  better than FB/IG scraping alone, but still won't be 100%. Phone (from
+  Maps directly) stays the one channel you can count on for every lead —
+  plan outreach sequencing around that, with email as a bonus layer.
+- Enabling gosom's `-email` flag makes it crawl each candidate's website
+  too, which increases scrape runtime (gosom's own docs note this) — the
+  Action's timeout was raised to 55 min and the n8n Wait node to 65 min
+  to give it room; if you're still seeing timeouts on large `depth`
+  values, lower `depth` before raising these further.
 - **`depth` controls how many raw Maps results get pulled before
   filtering.** If a niche+location search comes back with fewer than 50
   eligible leads after filtering, raise `depth` on the next run rather
