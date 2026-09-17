@@ -56,6 +56,7 @@ jobs:
       - name: Run scraper pipeline
         env:
           SEEN_LOOKUP_URL: ${{ secrets.N8N_SEEN_LOOKUP_URL }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
         run: |
           python -m scraper.main \
             --niche "${{ inputs.niche }}" \
