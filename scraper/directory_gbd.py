@@ -40,6 +40,7 @@ thing to check on a real page from that specific domain.
 """
 
 import re
+import sys
 import time
 import requests
 from urllib.parse import quote
@@ -77,6 +78,13 @@ def resolve_category(domain: str, niche: str) -> str | None:
     if key in CATEGORY_SEED:
         return CATEGORY_SEED[key]
 
+    # NOTE: this DDG search step has been observed returning nothing when
+    # run from a GitHub Actions runner specifically — search engines often
+    # rate-limit or silently empty-result CI/cloud IP ranges even when the
+    # identical query works fine from an ordinary connection. Add the
+    # niche to CATEGORY_SEED above (verified against the live site) to
+    # skip this search entirely for it — that's the reliable fix, not a
+    # retry or a different search engine.
     query = f"{niche} site:{domain}/category"
     try:
         resp = requests.get(
@@ -84,11 +92,17 @@ def resolve_category(domain: str, niche: str) -> str | None:
             headers=HEADERS, timeout=10,
         )
         if resp.status_code != 200:
+            print(f"      [{domain}] DDG search returned HTTP {resp.status_code} for niche '{niche}'", file=sys.stderr)
             return None
-    except requests.RequestException:
+        if len(resp.text) < 500:
+            print(f"      [{domain}] DDG search response looked too short ({len(resp.text)} chars) — possibly rate-limited/blocked, for niche '{niche}'", file=sys.stderr)
+    except requests.RequestException as e:
+        print(f"      [{domain}] DDG search request failed ({e}) for niche '{niche}'", file=sys.stderr)
         return None
 
     m = re.search(re.escape(domain) + r"/category/([a-z0-9-]+)", resp.text, re.IGNORECASE)
+    if not m:
+        print(f"      [{domain}] search returned a page but no category link matched for niche '{niche}' — add a confirmed slug to CATEGORY_SEED instead", file=sys.stderr)
     return m.group(1) if m else None
 
 

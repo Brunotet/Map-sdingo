@@ -31,6 +31,7 @@ it doesn't break.
 """
 
 import re
+import sys
 import time
 import requests
 from urllib.parse import quote
@@ -48,6 +49,21 @@ HEADERS = {
 PROFILE_LINK_RE = re.compile(r'^/company/\d+-[^/?#]+$')
 CATEGORY_LINK_RE = re.compile(r'^/[a-z0-9-]+/[a-z0-9-]+/\d+_[a-z0-9-]+/[a-z0-9-]+$')
 
+# Real, confirmed category-listing URLs — checked directly against the
+# live site, not discovered via search. Bypasses the DDG bootstrap
+# entirely for these exact (domain, niche, location) combos, which
+# matters because that bootstrap has been observed returning nothing
+# when run from a GitHub Actions runner specifically — DuckDuckGo (like
+# most search engines) is known to rate-limit or silently empty-result
+# traffic from CI/cloud IP ranges, even when the exact same query works
+# fine from an ordinary residential/office connection. Add a confirmed
+# URL here any time you verify one by hand, the same way this one was
+# found — it sidesteps that CI-IP problem completely for that combo on
+# every future run.
+VERIFIED_CATEGORY_URLS = {
+    ("misterwhat.co.uk", "builders", "london"): "https://www.misterwhat.co.uk/greater-london/london/876_london/builders",
+}
+
 
 def _get(url: str, timeout: int = 12) -> str | None:
     try:
@@ -61,8 +77,17 @@ def _ddg_search(query: str, timeout: int = 10) -> str | None:
     url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
     try:
         resp = requests.get(url, headers=HEADERS, timeout=timeout)
-        return resp.text if resp.status_code == 200 else None
-    except requests.RequestException:
+        if resp.status_code != 200:
+            print(f"      [misterwhat] DDG search returned HTTP {resp.status_code} for: {query}", file=sys.stderr)
+            return None
+        if len(resp.text) < 500:
+            # DDG sometimes returns a short "blocked"/CAPTCHA page rather than
+            # a real error status — a suspiciously tiny response body is a
+            # tell that this wasn't a normal results page.
+            print(f"      [misterwhat] DDG search response looked too short ({len(resp.text)} chars) — possibly rate-limited/blocked for: {query}", file=sys.stderr)
+        return resp.text
+    except requests.RequestException as e:
+        print(f"      [misterwhat] DDG search request failed ({e}) for: {query}", file=sys.stderr)
         return None
 
 
@@ -73,12 +98,17 @@ def _bootstrap_category_url(domain: str, niche: str, location: str) -> str | Non
     real company page the search turns up — rather than guessing at that
     country's city-ID/region-slug conventions.
     """
+    seed_key = (domain, niche.strip().lower(), location.strip().lower())
+    if seed_key in VERIFIED_CATEGORY_URLS:
+        return VERIFIED_CATEGORY_URLS[seed_key]
+
     search_html = _ddg_search(f"{niche} {location} site:{domain}")
     if not search_html:
         return None
 
     company_links = re.findall(r'class="result__a"[^>]*href="([^"]*' + re.escape(domain) + r'/company/\d+-[^"]+)"', search_html)
     if not company_links:
+        print(f"      [misterwhat] search returned a page but no company links matched for {domain}/{niche}/{location} — DDG's result markup may have changed, or genuinely no results", file=sys.stderr)
         return None
 
     profile_html = _get(company_links[0])
