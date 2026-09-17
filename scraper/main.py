@@ -48,6 +48,7 @@ def parse_args():
     p.add_argument("--seen-lookup-url", default=os.environ.get("SEEN_LOOKUP_URL"))
     p.add_argument("--skip-ad-library", action="store_true", help="Skip the Playwright ad-library check (faster, no running_ads signal)")
     p.add_argument("--skip-directory", action="store_true", help="Skip Yellosa entirely and go straight to Google Maps (escape hatch if a niche has no good directory category match)")
+    p.add_argument("--max-social-searches", type=int, default=50, help="Max FB/IG discovery searches per run, to protect the search API's free-tier monthly budget — raise if you have a larger Tavily plan")
     p.add_argument("--out", default="leads.json")
     return p.parse_args()
 
@@ -63,6 +64,7 @@ def run(
     skip_ad_library: bool = False,
     scrape_timeout: int = 2700,
     skip_directory: bool = False,
+    max_social_searches: int = 20,
 ) -> list[dict]:
     print("[1/7] Checking which ones you already have in n8n...", file=sys.stderr)
     seen_cids = fetch_seen_cids(seen_lookup_url, niche, location)
@@ -100,15 +102,21 @@ def run(
             file=sys.stderr,
         )
 
-    print("[4/7] For leads with nothing at all linked, searching the web for a social page...", file=sys.stderr)
+    print(f"[4/7] For leads with nothing at all linked, searching the web for a social page (capped at {max_social_searches}/run to protect the search API's free-tier budget)...", file=sys.stderr)
     discovered = 0
+    searched = 0
+    needed = 0
     for b in eligible:
         if not b.get("gosom_email") and not (b.get("website") or "").strip():
+            needed += 1
+            if searched >= max_social_searches:
+                continue
+            searched += 1
             found = find_social_link(b["name"], location)
             if found:
                 b["website"] = found
                 discovered += 1
-    print(f"      -> found a Facebook/Instagram page for {discovered}/{len(eligible)} leads that had nothing linked", file=sys.stderr)
+    print(f"      -> found a Facebook/Instagram page for {discovered}/{searched} searched ({needed} leads actually had nothing linked, {max(0, needed - searched)} skipped past the cap)", file=sys.stderr)
 
     print("[5/7] Emails: checking gosom/directory-description first, then FB/Instagram for the rest...", file=sys.stderr)
     enriched = []
@@ -195,6 +203,7 @@ def main():
         args.skip_ad_library,
         args.scrape_timeout,
         args.skip_directory,
+        args.max_social_searches,
     )
 
     with open(args.out, "w", encoding="utf-8") as f:

@@ -2,38 +2,28 @@
 For leads where Google Maps has NO website/social link at all (empty
 "website" field — common, as real data has shown: most small local
 businesses simply never registered one with their Business Profile), this
-does a free web search for their Facebook or Instagram page, so the
+does a web search for their Facebook or Instagram page, so the
 enrichment pipeline (enrich.py) has somewhere to look. Without this, those
 leads have zero path to an email no matter how good the FB/IG scraping is
 — there's nothing to scrape.
 
-Also searches South African business directories directly for a listed
-email — several (Yellosa.co.za confirmed as of 2026: 600k+ SA listings,
-updated daily, collects "Company email" as a structured listing field)
-require an email at signup, unlike Google Business Profile where it's
-optional and rarely public. This is a genuinely higher-yield source than
-FB/IG bio scraping for businesses that have listed themselves on one of
-these — worth trying as its own step, not just a Facebook/Instagram
-substitute.
+Search itself now goes through search_provider.py (Tavily API, free
+tier, with a DDG-HTML last-resort fallback) instead of hitting
+DuckDuckGo's HTML page directly — a real run confirmed that direct
+approach silently returns nothing from GitHub Actions' IP ranges. See
+search_provider.py's docstring for the full story and setup steps.
 
-Uses DuckDuckGo's HTML endpoint (html.duckduckgo.com) — not an official
-API, no key, no paid tier, and it's the same result set a browser gets,
-just as parseable HTML instead of a JS-rendered page. This is the
-"free tools only" option; Bing/Google both require paid API keys at any
-real volume.
-
-HONEST CAVEAT: this isn't an official, stable API — DuckDuckGo can change
-this page's structure or rate-limit automated traffic without notice. If
-`find_social_link` or `find_directory_email` start returning None for
-everything, check this page manually in a browser first before assuming
-the regex needs fixing.
+HONEST CAVEAT: even with a real search API behind it, this is still
+"find their social page via search," not guaranteed — a business with no
+FB/IG presence anywhere just won't have anything to find here, same as
+before.
 """
 
 import re
 import time
 import requests
-from urllib.parse import quote
 from scraper.email_utils import extract_email_from_html
+from scraper.search_provider import search_urls
 
 HEADERS = {
     "User-Agent": (
@@ -42,30 +32,14 @@ HEADERS = {
     )
 }
 
-FB_RESULT_RE = re.compile(r'https?://(?:www\.|web\.|m\.)?facebook\.com/[^\s"\'<>&]+', re.IGNORECASE)
-IG_RESULT_RE = re.compile(r'https?://(?:www\.)?instagram\.com/[^\s"\'<>&]+', re.IGNORECASE)
+FB_RESULT_RE = re.compile(r'https?://(?:www\.|web\.|m\.)?facebook\.com/', re.IGNORECASE)
+IG_RESULT_RE = re.compile(r'https?://(?:www\.)?instagram\.com/', re.IGNORECASE)
 
 # South African business directories confirmed (2026) to be active and to
 # collect an email per listing. Kept short and deliberately checked-not-
 # guessed — add more here once you've confirmed a directory actually
 # publishes emails rather than gating them behind a paid unlock.
 SA_DIRECTORY_SITES = ["yellosa.co.za", "thebusinessdirectory.co.za"]
-
-
-def _ddg_search(query: str, timeout: int = 10) -> str | None:
-    url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=timeout)
-        return resp.text if resp.status_code == 200 else None
-    except requests.RequestException:
-        return None
-
-
-def _result_links(html: str) -> list[str]:
-    """DuckDuckGo's HTML results wrap each link in an <a class="result__a" href="...">."""
-    if not html:
-        return []
-    return re.findall(r'class="result__a"[^>]*href="([^"]+)"', html)
 
 
 def find_social_link(business_name: str, location: str, timeout: int = 10) -> str | None:
@@ -77,16 +51,14 @@ def find_social_link(business_name: str, location: str, timeout: int = 10) -> st
     an email) than Instagram profiles.
     """
     query = f"{business_name} {location} facebook OR instagram"
-    text = _ddg_search(query, timeout=timeout)
-    if not text:
-        return None
+    urls = search_urls(query, max_results=5, timeout=timeout)
 
-    fb = FB_RESULT_RE.search(text)
+    fb = next((u for u in urls if FB_RESULT_RE.match(u)), None)
     if fb:
-        return fb.group(0)
-    ig = IG_RESULT_RE.search(text)
+        return fb
+    ig = next((u for u in urls if IG_RESULT_RE.match(u)), None)
     if ig:
-        return ig.group(0)
+        return ig
     return None
 
 
@@ -113,8 +85,8 @@ def find_directory_email(business_name: str, location: str, timeout: int = 10, d
     """
     for site in SA_DIRECTORY_SITES:
         query = f"{business_name} {location} site:{site}"
-        search_html = _ddg_search(query, timeout=timeout)
-        links = [l for l in _result_links(search_html or "") if site in l]
+        urls = search_urls(query, max_results=5, timeout=timeout)
+        links = [u for u in urls if site in u]
         if not links:
             time.sleep(delay)
             continue

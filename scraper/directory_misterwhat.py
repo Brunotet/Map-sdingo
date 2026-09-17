@@ -34,10 +34,10 @@ import re
 import sys
 import time
 import requests
-from urllib.parse import quote
 from bs4 import BeautifulSoup
 
 from scraper.email_utils import extract_email_from_html, extract_emails_from_html
+from scraper.search_provider import search_urls
 
 HEADERS = {
     "User-Agent": (
@@ -73,24 +73,6 @@ def _get(url: str, timeout: int = 12) -> str | None:
         return None
 
 
-def _ddg_search(query: str, timeout: int = 10) -> str | None:
-    url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=timeout)
-        if resp.status_code != 200:
-            print(f"      [misterwhat] DDG search returned HTTP {resp.status_code} for: {query}", file=sys.stderr)
-            return None
-        if len(resp.text) < 500:
-            # DDG sometimes returns a short "blocked"/CAPTCHA page rather than
-            # a real error status — a suspiciously tiny response body is a
-            # tell that this wasn't a normal results page.
-            print(f"      [misterwhat] DDG search response looked too short ({len(resp.text)} chars) — possibly rate-limited/blocked for: {query}", file=sys.stderr)
-        return resp.text
-    except requests.RequestException as e:
-        print(f"      [misterwhat] DDG search request failed ({e}) for: {query}", file=sys.stderr)
-        return None
-
-
 def _bootstrap_category_url(domain: str, niche: str, location: str) -> str | None:
     """
     Finds a REAL, working category-listing URL for this domain+niche+
@@ -102,13 +84,10 @@ def _bootstrap_category_url(domain: str, niche: str, location: str) -> str | Non
     if seed_key in VERIFIED_CATEGORY_URLS:
         return VERIFIED_CATEGORY_URLS[seed_key]
 
-    search_html = _ddg_search(f"{niche} {location} site:{domain}")
-    if not search_html:
-        return None
-
-    company_links = re.findall(r'class="result__a"[^>]*href="([^"]*' + re.escape(domain) + r'/company/\d+-[^"]+)"', search_html)
+    urls = search_urls(f"{niche} {location} site:{domain}", max_results=5)
+    company_links = [u for u in urls if f"{domain}/company/" in u]
     if not company_links:
-        print(f"      [misterwhat] search returned a page but no company links matched for {domain}/{niche}/{location} — DDG's result markup may have changed, or genuinely no results", file=sys.stderr)
+        print(f"      [misterwhat] search returned nothing usable for {domain}/{niche}/{location}", file=sys.stderr)
         return None
 
     profile_html = _get(company_links[0])
