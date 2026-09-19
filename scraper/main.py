@@ -8,6 +8,17 @@ for this part), richer per-listing data, and doesn't share Maps' rate
 limits. Google Maps (via gosom) is now the FALLBACK, only scraped if the
 directory doesn't reach --max-results on its own for a given niche/location.
 
+REACHABILITY FILTER (added 2026-09): a lead that has neither an email
+nor a WhatsApp-capable mobile number can't actually be contacted through
+either of this pipeline's outreach channels — kept in the Sheet, it's
+just dead weight. After email discovery runs, every lead's phone gets
+classified mobile/landline/unknown (phone_classify.py, via Google's
+phonenumbers library) and any lead with no email AND a non-mobile phone
+gets dropped. This can bring the final count below --max-results when a
+lot of leads turn out unreachable — that's expected, not a bug; the
+alternative (keeping unreachable leads just to hit a number) defeats the
+point of the list.
+
 Usage:
     python -m scraper.main --niche "hair salons" --location "Nelspruit" \
         --max-results 50 --min-rating 3.5 [--webhook-url URL] [--depth 5]
@@ -33,13 +44,14 @@ from scraper.dedup import fetch_seen_cids
 from scraper.signals import extract_bio_signals, owner_response_ratio
 from scraper.intent import score_intent
 from scraper.web_discovery import find_social_link
+from scraper.phone_classify import classify_phone
 
 
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--niche", required=True)
     p.add_argument("--location", required=True)
-    p.add_argument("--country", default="ZA", help="2-letter country code for the Ad Library check")
+    p.add_argument("--country", default="ZA", help="2-letter country code for the Ad Library check, directory selection, and phone-number classification")
     p.add_argument("--max-results", type=int, default=50)
     p.add_argument("--min-rating", type=float, default=3.5)
     p.add_argument("--depth", type=int, default=5, help="Maps scroll depth — raise if too few eligible leads survive filtering (only matters if the directory source can't fill max-results on its own)")
@@ -64,26 +76,26 @@ def run(
     skip_ad_library: bool = False,
     scrape_timeout: int = 2700,
     skip_directory: bool = False,
-    max_social_searches: int = 20,
+    max_social_searches: int = 50,
 ) -> list[dict]:
-    print("[1/7] Checking which ones you already have in n8n...", file=sys.stderr)
+    print("[1/8] Checking which ones you already have in n8n...", file=sys.stderr)
     seen_cids = fetch_seen_cids(seen_lookup_url, niche, location)
     print(f"      -> {len(seen_cids)} already-used business IDs on record for this niche", file=sys.stderr)
 
     eligible = []
 
     if not skip_directory:
-        print(f"[2/7] Scraping the directory for '{niche} in {location}' (country={country}, primary source)...", file=sys.stderr)
+        print(f"[2/8] Scraping the directory for '{niche} in {location}' (country={country}, primary source)...", file=sys.stderr)
         directory_raw = scrape_directory_leads(niche, location, max_results=max_results, country=country)
         print(f"      -> {len(directory_raw)} no-website candidates found on the directory", file=sys.stderr)
         eligible = filter_and_sort(directory_raw, max_results=max_results, min_rating=min_rating, seen_cids=seen_cids)
         print(f"      -> {len(eligible)} fresh eligible leads from the directory (capped at {max_results})", file=sys.stderr)
     else:
-        print("[2/7] --skip-directory set, going straight to Google Maps", file=sys.stderr)
+        print("[2/8] --skip-directory set, going straight to Google Maps", file=sys.stderr)
 
     shortfall = max_results - len(eligible)
     if shortfall > 0:
-        print(f"[3/7] Directory came up {shortfall} short of {max_results} — falling back to Google Maps for the rest (depth={depth}, timeout={scrape_timeout}s)...", file=sys.stderr)
+        print(f"[3/8] Directory came up {shortfall} short of {max_results} — falling back to Google Maps for the rest (depth={depth}, timeout={scrape_timeout}s)...", file=sys.stderr)
         maps_raw = scrape(niche, location, depth=depth, timeout_s=scrape_timeout)
         print(f"      -> {len(maps_raw)} raw Maps listings", file=sys.stderr)
         for entry in maps_raw:
@@ -93,7 +105,7 @@ def run(
         print(f"      -> {len(maps_eligible)} fresh eligible leads from Maps to fill the shortfall", file=sys.stderr)
         eligible.extend(maps_eligible)
     else:
-        print("[3/7] Directory alone reached max-results — skipping Google Maps entirely this run", file=sys.stderr)
+        print("[3/8] Directory alone reached max-results — skipping Google Maps entirely this run", file=sys.stderr)
 
     if len(eligible) < max_results:
         print(
@@ -102,7 +114,7 @@ def run(
             file=sys.stderr,
         )
 
-    print(f"[4/7] For leads with nothing at all linked, searching the web for a social page (capped at {max_social_searches}/run to protect the search API's free-tier budget)...", file=sys.stderr)
+    print(f"[4/8] For leads with nothing at all linked, searching the web for a social page (capped at {max_social_searches}/run to protect the search API's free-tier budget)...", file=sys.stderr)
     discovered = 0
     searched = 0
     needed = 0
@@ -118,7 +130,7 @@ def run(
                 discovered += 1
     print(f"      -> found a Facebook/Instagram page for {discovered}/{searched} searched ({needed} leads actually had nothing linked, {max(0, needed - searched)} skipped past the cap)", file=sys.stderr)
 
-    print("[5/7] Emails: checking gosom/directory-description first, then FB/Instagram for the rest...", file=sys.stderr)
+    print("[5/8] Emails: checking gosom/directory-description first, then FB/Instagram for the rest...", file=sys.stderr)
     enriched = []
     from_free = 0
     for b in eligible:
@@ -133,7 +145,20 @@ def run(
     found = sum(1 for b in enriched if b.get("email"))
     print(f"      -> email found for {found}/{len(enriched)} leads ({from_free} from gosom/description, {found - from_free} from FB/IG)", file=sys.stderr)
 
-    print("[6/7] Pulling business-level intent signals (bio phrasing, reviews, ad activity)...", file=sys.stderr)
+    print("[6/8] Checking reachability (email, or a WhatsApp-capable mobile number)...", file=sys.stderr)
+    reachable = []
+    dropped = 0
+    for b in enriched:
+        phone_type = classify_phone(b.get("phone"), country)
+        b["phone_type"] = phone_type
+        if b.get("email") or phone_type == "mobile":
+            reachable.append(b)
+        else:
+            dropped += 1
+    print(f"      -> {dropped} lead(s) dropped: no email and no mobile/WhatsApp-capable number (landline or unknown only)", file=sys.stderr)
+    enriched = reachable
+
+    print("[7/8] Pulling business-level intent signals (bio phrasing, reviews, ad activity)...", file=sys.stderr)
     for b in enriched:
         b.update(extract_bio_signals(b.pop("_bio_text", None)))
         b["owner_response_ratio"] = owner_response_ratio(b.pop("_raw", {}))
@@ -151,7 +176,7 @@ def run(
     else:
         print("      -> --skip-ad-library set, ad_status left as unknown for all leads", file=sys.stderr)
 
-    print("[7/7] Scoring website intent (1-10) + suggesting other service intents...", file=sys.stderr)
+    print("[8/8] Scoring website intent (1-10) + suggesting other service intents...", file=sys.stderr)
     for b in enriched:
         b.update(score_intent(b))
 
