@@ -7,7 +7,7 @@ on:
         description: "Business niche/category, e.g. 'hair salons'"
         required: true
       location:
-        description: "City/area, e.g. 'Nelspruit'"
+        description: "City/area, e.g. 'Nelspruit' — ignored in whole_country mode"
         required: true
       max_results:
         description: "Max eligible leads to return"
@@ -18,7 +18,7 @@ on:
         required: false
         default: "3.5"
       country:
-        description: "2-letter country code for the Ad Library intent check"
+        description: "2-letter country code for the Ad Library intent check, directory selection, and phone classification"
         required: false
         default: "ZA"
       depth:
@@ -33,14 +33,22 @@ on:
         required: false
         default: "2700"
       skip_directory:
-        description: "Set to 'true' to skip the Yellosa directory entirely and go straight to Google Maps"
+        description: "Set to 'true' to skip the directory entirely and go straight to Google Maps"
         required: false
         default: "false"
+      whole_country:
+        description: "Set to 'true' to loop city-by-city across the whole country instead of a single location. WARNING: much longer runtime — a single city can already take 10+ minutes, so this can run well over an hour depending on max_cities."
+        required: false
+        default: "false"
+      max_cities:
+        description: "How many of the country's biggest cities to loop through in whole_country mode. Keep this modest — each city costs real time."
+        required: false
+        default: "8"
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
@@ -67,7 +75,9 @@ jobs:
             --depth "${{ inputs.depth }}" \
             --scrape-timeout "${{ inputs.scrape_timeout }}" \
             --webhook-url "${{ inputs.callback_url }}" \
-            $( [ "${{ inputs.skip_directory }}" = "true" ] && echo "--skip-directory" )
+            --max-cities "${{ inputs.max_cities }}" \
+            $( [ "${{ inputs.skip_directory }}" = "true" ] && echo "--skip-directory" ) \
+            $( [ "${{ inputs.whole_country }}" = "true" ] && echo "--whole-country" )
 
       - name: Upload leads as artifact
         uses: actions/upload-artifact@v4
