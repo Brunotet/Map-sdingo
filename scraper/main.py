@@ -61,6 +61,8 @@ def parse_args():
     p.add_argument("--skip-ad-library", action="store_true", help="Skip the Playwright ad-library check (faster, no running_ads signal)")
     p.add_argument("--skip-directory", action="store_true", help="Skip Yellosa entirely and go straight to Google Maps (escape hatch if a niche has no good directory category match)")
     p.add_argument("--max-social-searches", type=int, default=50, help="Max FB/IG discovery searches per run, to protect the search API's free-tier monthly budget — raise if you have a larger Tavily plan")
+    p.add_argument("--whole-country", action="store_true", help="Loop city-by-city across the whole country instead of a single location — the unfiltered/national directory view was confirmed NOT to be a comprehensive national index on its own")
+    p.add_argument("--max-cities", type=int, default=15, help="How many of the country's biggest cities to loop through in --whole-country mode")
     p.add_argument("--out", default="leads.json")
     return p.parse_args()
 
@@ -77,6 +79,8 @@ def run(
     scrape_timeout: int = 2700,
     skip_directory: bool = False,
     max_social_searches: int = 50,
+    whole_country: bool = False,
+    max_cities: int = 15,
 ) -> list[dict]:
     print("[1/8] Checking which ones you already have in n8n...", file=sys.stderr)
     seen_cids = fetch_seen_cids(seen_lookup_url, niche, location)
@@ -85,8 +89,9 @@ def run(
     eligible = []
 
     if not skip_directory:
-        print(f"[2/8] Scraping the directory for '{niche} in {location}' (country={country}, primary source)...", file=sys.stderr)
-        directory_raw = scrape_directory_leads(niche, location, max_results=max_results, country=country)
+        mode = f"whole-country, up to {max_cities} cities" if whole_country else f"'{location}'"
+        print(f"[2/8] Scraping the directory for '{niche}' ({mode}, country={country}, primary source)...", file=sys.stderr)
+        directory_raw = scrape_directory_leads(niche, location, max_results=max_results, country=country, whole_country=whole_country, max_cities=max_cities)
         print(f"      -> {len(directory_raw)} no-website candidates found on the directory", file=sys.stderr)
         eligible = filter_and_sort(directory_raw, max_results=max_results, min_rating=min_rating, seen_cids=seen_cids)
         print(f"      -> {len(eligible)} fresh eligible leads from the directory (capped at {max_results})", file=sys.stderr)
@@ -95,14 +100,31 @@ def run(
 
     shortfall = max_results - len(eligible)
     if shortfall > 0:
-        print(f"[3/8] Directory came up {shortfall} short of {max_results} — falling back to Google Maps for the rest (depth={depth}, timeout={scrape_timeout}s)...", file=sys.stderr)
-        maps_raw = scrape(niche, location, depth=depth, timeout_s=scrape_timeout)
-        print(f"      -> {len(maps_raw)} raw Maps listings", file=sys.stderr)
-        for entry in maps_raw:
-            entry.setdefault("source", "gmaps")
         already_picked = seen_cids | {b["cid"] for b in eligible if b.get("cid")}
-        maps_eligible = filter_and_sort(maps_raw, max_results=shortfall, min_rating=min_rating, seen_cids=already_picked)
-        print(f"      -> {len(maps_eligible)} fresh eligible leads from Maps to fill the shortfall", file=sys.stderr)
+        if whole_country:
+            print(f"[3/8] Directory came up {shortfall} short of {max_results} — falling back to Google Maps, whole-country (up to {max_cities} cities, depth={depth}, timeout={scrape_timeout}s each)...", file=sys.stderr)
+            from scraper.geo_cities import get_cities
+            cities = get_cities(country, max_cities=max_cities) or [location]
+            maps_eligible = []
+            for city in cities:
+                if len(maps_eligible) >= shortfall:
+                    break
+                remaining = shortfall - len(maps_eligible)
+                print(f"      [gmaps] whole-country: scraping '{niche}' in {city}... ({len(maps_eligible)}/{shortfall} so far)", file=sys.stderr)
+                city_raw = scrape(niche, city, depth=depth, timeout_s=scrape_timeout)
+                for entry in city_raw:
+                    entry.setdefault("source", "gmaps")
+                city_eligible = filter_and_sort(city_raw, max_results=remaining, min_rating=min_rating, seen_cids=already_picked | {b["cid"] for b in maps_eligible if b.get("cid")})
+                maps_eligible.extend(city_eligible)
+            print(f"      -> {len(maps_eligible)} fresh eligible leads from Maps across all cities tried", file=sys.stderr)
+        else:
+            print(f"[3/8] Directory came up {shortfall} short of {max_results} — falling back to Google Maps for the rest (depth={depth}, timeout={scrape_timeout}s)...", file=sys.stderr)
+            maps_raw = scrape(niche, location, depth=depth, timeout_s=scrape_timeout)
+            print(f"      -> {len(maps_raw)} raw Maps listings", file=sys.stderr)
+            for entry in maps_raw:
+                entry.setdefault("source", "gmaps")
+            maps_eligible = filter_and_sort(maps_raw, max_results=shortfall, min_rating=min_rating, seen_cids=already_picked)
+            print(f"      -> {len(maps_eligible)} fresh eligible leads from Maps to fill the shortfall", file=sys.stderr)
         eligible.extend(maps_eligible)
     else:
         print("[3/8] Directory alone reached max-results — skipping Google Maps entirely this run", file=sys.stderr)
@@ -229,6 +251,8 @@ def main():
         args.scrape_timeout,
         args.skip_directory,
         args.max_social_searches,
+        args.whole_country,
+        args.max_cities,
     )
 
     with open(args.out, "w", encoding="utf-8") as f:

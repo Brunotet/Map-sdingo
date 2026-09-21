@@ -1,42 +1,38 @@
 """
 Generic parser for the "Global Business Directory LLC" network — confirmed
-(2026) to run 136 country-specific sites on the SAME underlying platform:
-identical "Data Hub" wording, identical /category/, /company/, /location/
-URL structure, identical pricing-tier model. Yellosa.co.za (South Africa)
-was verified directly first; BusinessList.com.ng (Nigeria) was then
-checked and found to be byte-for-byte the same software, just re-skinned
-and re-domained — confirming this generalizes rather than being a
-coincidence.
+(2026) to run ~136 country-specific sites on the SAME underlying platform
+(Yellosa.co.za for South Africa, BusinessList.com.ng for Nigeria, both
+independently verified to be identical software). Full country->domain
+registry lives in directory_source.py.
 
-Full country->domain registry lives in directory_source.py (this module
-just needs a domain passed in). ~125 countries are wired up there,
-covering most of the network's advertised 136 sites — Yellosa/ZA was the
-only one independently checked page-by-page; the rest are extended with
-high (not absolute) confidence given the confirmed shared platform.
-
-CONFIRMED URL STRUCTURE (checked directly on 2 of the network's domains):
+CONFIRMED URL STRUCTURE:
   /category/<slug>                       - category listing, page 1
   /category/<slug>/<n>                   - category listing, page n
   /category/<slug>/city:<city-slug>      - filtered to one city
   /company/<id>/<slug>                   - individual listing profile
 
-EMAIL: confirmed NOT freely visible on Yellosa specifically (gated behind
-sign-in, same for "Send Enquiry") — assume the same holds across the rest
-of this network, since it's the same software and same business model
-(their paid "Data Hub" product is explicitly the monetized path to bulk
-contact data). This module does NOT attempt to get past that. What IS
-freely visible and used here: phone, address, a real website URL when one
-exists, established year, employee band, VAT/registration number, and
-the full business description text (occasionally has an email written
-directly into it by the owner).
+WHOLE-COUNTRY MODE (added 2026-09): the unfiltered /category/<slug> page
+(no city: filter) looks like it should cover a whole country — it's the
+fallback this code already used whenever a city: filter came up empty —
+but a real run showed it is NOT a comprehensive national index (only 2
+results for a niche with far more listings than that). It behaves like a
+limited top-listings view, not a full paginated country index. Real
+whole-country coverage means looping real cities (geo_cities.py) and
+running the same per-city scrape that's already proven to work well
+(e.g. the 50-lead London MisterWhat run), then aggregating and
+deduplicating by cid across cities.
 
-HONEST CAVEAT: label-text pairing is used instead of CSS selectors (same
-reasoning as every other scraper in this repo — built without a live
-browser to inspect exact tag/class structure, only rendered text and
-links were verifiable). A domain in this network that hasn't been
-directly checked might phrase a label slightly differently (localized
-wording) — if a country consistently returns nothing, that's the first
-thing to check on a real page from that specific domain.
+EMAIL: confirmed NOT freely visible on this network — Yellosa checked
+directly: "Show Email" AND "Send Enquiry" both require sign-in
+(/sign-in/... redirect). This module does not attempt to get past that.
+What IS freely visible: phone, address, a real website when one exists,
+established year, employee band, VAT/registration number, full
+description text (occasionally has an email typed directly into it).
+
+Website classification reuses filters.classify_website() so a
+Facebook/Instagram link listed as the "website" is correctly treated as
+"no real website" (consistent with the rule everywhere else in this
+pipeline) rather than wrongly excluding the lead.
 """
 
 import re
@@ -47,6 +43,7 @@ from bs4 import BeautifulSoup
 
 from scraper.email_utils import extract_email_from_html
 from scraper.search_provider import search_urls
+from scraper.filters import classify_website
 
 HEADERS = {
     "User-Agent": (
@@ -78,12 +75,6 @@ def resolve_category(domain: str, niche: str) -> str | None:
     if key in CATEGORY_SEED:
         return CATEGORY_SEED[key]
 
-    # Now goes through search_provider.py (Tavily, with DDG-HTML as a
-    # last-resort fallback) rather than hitting DDG directly — a real run
-    # confirmed direct DDG scraping returns nothing from GitHub Actions'
-    # IP ranges specifically. Add the niche to CATEGORY_SEED above
-    # (verified against the live site) to skip search entirely for it —
-    # the most reliable fix regardless of which search backend is used.
     urls = search_urls(f"{niche} site:{domain}/category", max_results=5, timeout=10)
     if not urls:
         print(f"      [{domain}] search returned nothing for niche '{niche}'", file=sys.stderr)
@@ -140,8 +131,8 @@ def _parse_profile(html: str, url: str, source_name: str) -> dict | None:
     soup = BeautifulSoup(html, "html.parser")
     text = soup.get_text(separator="\n")
 
-    website_value = _label_value(text, "Website address")
-    has_real_website = bool(website_value) and not website_value.lower().startswith(("send enquiry", "show email"))
+    website_text = _label_value(text, "Website address")
+    website_class = classify_website(website_text)
 
     phone = None
     tel_link = soup.find("a", href=re.compile(r"^tel:"))
@@ -176,7 +167,8 @@ def _parse_profile(html: str, url: str, source_name: str) -> dict | None:
     return {
         "name": name,
         "phone": phone,
-        "website": website_value if has_real_website else None,
+        "website": website_text if website_class == "social" else None,
+        "_website_class": website_class,
         "address": address,
         "category": category,
         "rating": rating,
@@ -192,22 +184,16 @@ def _parse_profile(html: str, url: str, source_name: str) -> dict | None:
     }
 
 
-def scrape_directory_leads(
+def _scrape_one_location(
     domain: str,
     niche: str,
     location: str,
-    max_results: int = 50,
-    max_pages: int = 8,
-    delay: float = 1.0,
+    max_results: int,
+    max_pages: int,
+    delay: float,
+    source_name: str,
 ) -> list[dict]:
-    """
-    `domain` is the bare host (e.g. "www.yellosa.co.za" or
-    "www.businesslist.com.ng") — see directory_source.py's registry for
-    the full country->domain mapping.
-    """
     base = f"https://{domain}"
-    source_name = domain.split(".")[-2] if "." in domain else domain  # e.g. "yellosa", "businesslist"
-
     category = resolve_category(domain, niche)
     if not category:
         return []
@@ -242,7 +228,7 @@ def scrape_directory_leads(
         time.sleep(delay)
         if not lead or not lead.get("name"):
             continue
-        if lead.get("website"):
+        if lead.pop("_website_class", "none") == "real":
             continue
         address = (lead.get("address") or "").lower()
         if location_lower not in address:
@@ -253,3 +239,69 @@ def scrape_directory_leads(
         leads.append(lead)
 
     return leads
+
+
+def scrape_directory_leads(
+    domain: str,
+    niche: str,
+    location: str,
+    max_results: int = 50,
+    max_pages: int = 8,
+    delay: float = 0.4,
+    whole_country: bool = False,
+    country: str | None = None,
+    max_cities: int = 15,
+    max_workers: int = 4,
+) -> list[dict]:
+    """
+    `domain` is the bare host (e.g. "www.yellosa.co.za"). See
+    directory_source.py's registry for the full country->domain mapping.
+
+    whole_country=True loops real cities (via geo_cities.get_cities) and
+    aggregates+dedupes results across them, rather than relying on the
+    unfiltered category page's (not actually comprehensive) single view.
+    Cities are scraped CONCURRENTLY (max_workers at a time, default 4) —
+    each city's scrape is pure network I/O (no shared browser/state, no
+    Playwright involved on this network), so threading gives a close-to-
+    linear speedup here with no correctness tradeoff. Aggregation/dedup
+    happens after all threads complete, so there's no race on shared state
+    during the parallel phase itself.
+    """
+    source_name = domain.split(".")[-2] if "." in domain else domain
+
+    if not whole_country:
+        return _scrape_one_location(domain, niche, location, max_results, max_pages, delay, source_name)
+
+    from scraper.geo_cities import get_cities
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    cities = get_cities(country or "", max_cities=max_cities)
+    if not cities:
+        print(f"      [{domain}] no city list available for country '{country}' — falling back to a single unfiltered scrape", file=sys.stderr)
+        cities = [location] if location else [""]
+
+    all_leads = []
+    seen_cids = set()
+    batches = [cities[i:i + max_workers] for i in range(0, len(cities), max_workers)]
+    for batch in batches:
+        if len(all_leads) >= max_results:
+            break
+        print(f"      [{domain}] whole-country: scraping '{niche}' in {', '.join(batch)} (parallel, {max_workers} workers)... ({len(all_leads)}/{max_results} so far)", file=sys.stderr)
+        with ThreadPoolExecutor(max_workers=len(batch)) as executor:
+            futures = {
+                executor.submit(_scrape_one_location, domain, niche, city, max_results, max_pages, delay, source_name): city
+                for city in batch
+            }
+            for future in as_completed(futures):
+                city = futures[future]
+                try:
+                    city_leads = future.result()
+                except Exception as e:
+                    print(f"      [{domain}] city '{city}' scrape failed ({e}) — skipping it, others unaffected", file=sys.stderr)
+                    continue
+                for lead in city_leads:
+                    if lead["cid"] not in seen_cids:
+                        seen_cids.add(lead["cid"])
+                        all_leads.append(lead)
+
+    return all_leads[:max_results]
