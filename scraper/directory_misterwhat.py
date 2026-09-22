@@ -244,6 +244,7 @@ def _scrape_one_location_static(
             continue
         if not lead.get("category"):
             lead["category"] = niche
+        lead["scraped_location"] = location
         leads.append(lead)
 
     return leads

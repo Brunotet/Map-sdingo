@@ -63,6 +63,7 @@ def parse_args():
     p.add_argument("--max-social-searches", type=int, default=50, help="Max FB/IG discovery searches per run, to protect the search API's free-tier monthly budget — raise if you have a larger Tavily plan")
     p.add_argument("--whole-country", action="store_true", help="Loop city-by-city across the whole country instead of a single location — the unfiltered/national directory view was confirmed NOT to be a comprehensive national index on its own")
     p.add_argument("--max-cities", type=int, default=15, help="How many of the country's biggest cities to loop through in --whole-country mode")
+    p.add_argument("--max-maps-workers", type=int, default=2, help="How many Maps/gosom city scrapes to run concurrently in whole-country mode. Keep this low — each worker runs a full Docker+headless-browser instance, much heavier than the directory scrapers' workers")
     p.add_argument("--out", default="leads.json")
     return p.parse_args()
 
@@ -81,6 +82,7 @@ def run(
     max_social_searches: int = 50,
     whole_country: bool = False,
     max_cities: int = 15,
+    max_maps_workers: int = 2,
 ) -> list[dict]:
     print("[1/8] Checking which ones you already have in n8n...", file=sys.stderr)
     seen_cids = fetch_seen_cids(seen_lookup_url, niche, location)
@@ -102,20 +104,37 @@ def run(
     if shortfall > 0:
         already_picked = seen_cids | {b["cid"] for b in eligible if b.get("cid")}
         if whole_country:
-            print(f"[3/8] Directory came up {shortfall} short of {max_results} — falling back to Google Maps, whole-country (up to {max_cities} cities, depth={depth}, timeout={scrape_timeout}s each)...", file=sys.stderr)
+            print(f"[3/8] Directory came up {shortfall} short of {max_results} — falling back to Google Maps, whole-country (up to {max_cities} cities, {max_maps_workers} at a time, depth={depth}, timeout={scrape_timeout}s each)...", file=sys.stderr)
             from scraper.geo_cities import get_cities
+            from concurrent.futures import ThreadPoolExecutor, as_completed
             cities = get_cities(country, max_cities=max_cities) or [location]
             maps_eligible = []
-            for city in cities:
+            picked_cids = set(already_picked)
+            batches = [cities[i:i + max_maps_workers] for i in range(0, len(cities), max_maps_workers)]
+            for batch in batches:
                 if len(maps_eligible) >= shortfall:
                     break
-                remaining = shortfall - len(maps_eligible)
-                print(f"      [gmaps] whole-country: scraping '{niche}' in {city}... ({len(maps_eligible)}/{shortfall} so far)", file=sys.stderr)
-                city_raw = scrape(niche, city, depth=depth, timeout_s=scrape_timeout)
-                for entry in city_raw:
-                    entry.setdefault("source", "gmaps")
-                city_eligible = filter_and_sort(city_raw, max_results=remaining, min_rating=min_rating, seen_cids=already_picked | {b["cid"] for b in maps_eligible if b.get("cid")})
-                maps_eligible.extend(city_eligible)
+                print(f"      [gmaps] whole-country: scraping '{niche}' in {', '.join(batch)} (parallel, {len(batch)} at a time)... ({len(maps_eligible)}/{shortfall} so far)", file=sys.stderr)
+                with ThreadPoolExecutor(max_workers=len(batch)) as executor:
+                    futures = {executor.submit(scrape, niche, city, depth, scrape_timeout): city for city in batch}
+                    for future in as_completed(futures):
+                        city = futures[future]
+                        try:
+                            city_raw = future.result()
+                        except Exception as e:
+                            print(f"      [gmaps] city '{city}' scrape failed ({e}) — skipping it, others unaffected", file=sys.stderr)
+                            continue
+                        for entry in city_raw:
+                            entry.setdefault("source", "gmaps")
+                            entry["scraped_location"] = city
+                        remaining = shortfall - len(maps_eligible)
+                        if remaining <= 0:
+                            continue
+                        city_eligible = filter_and_sort(city_raw, max_results=remaining, min_rating=min_rating, seen_cids=picked_cids)
+                        for lead in city_eligible:
+                            if lead.get("cid"):
+                                picked_cids.add(lead["cid"])
+                        maps_eligible.extend(city_eligible)
             print(f"      -> {len(maps_eligible)} fresh eligible leads from Maps across all cities tried", file=sys.stderr)
         else:
             print(f"[3/8] Directory came up {shortfall} short of {max_results} — falling back to Google Maps for the rest (depth={depth}, timeout={scrape_timeout}s)...", file=sys.stderr)
@@ -123,6 +142,7 @@ def run(
             print(f"      -> {len(maps_raw)} raw Maps listings", file=sys.stderr)
             for entry in maps_raw:
                 entry.setdefault("source", "gmaps")
+                entry["scraped_location"] = location
             maps_eligible = filter_and_sort(maps_raw, max_results=shortfall, min_rating=min_rating, seen_cids=already_picked)
             print(f"      -> {len(maps_eligible)} fresh eligible leads from Maps to fill the shortfall", file=sys.stderr)
         eligible.extend(maps_eligible)
@@ -253,6 +273,7 @@ def main():
         args.max_social_searches,
         args.whole_country,
         args.max_cities,
+        args.max_maps_workers,
     )
 
     with open(args.out, "w", encoding="utf-8") as f:

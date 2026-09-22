@@ -236,6 +236,7 @@ def _scrape_one_location(
         if not lead.get("category"):
             lead["category"] = niche
         lead["gosom_email"] = extract_email_from_html(lead.get("description") or "")
+        lead["scraped_location"] = location  # which city this actually came from — the run-level "location" isn't this in whole-country mode
         leads.append(lead)
 
     return leads
