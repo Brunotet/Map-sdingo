@@ -19,6 +19,21 @@ lot of leads turn out unreachable — that's expected, not a bug; the
 alternative (keeping unreachable leads just to hit a number) defeats the
 point of the list.
 
+BOOLEAN CLI FLAG FIX (2026-09-24): --whole-country and --skip-directory
+used to be argparse store_true flags, only ever added to the command
+line when scrape.yml's shell conditional matched the literal string
+"true" exactly (e.g. `$( [ "${{ inputs.whole_country }}" = "true" ] &&
+echo "--whole-country" )`). Any mismatch — a real boolean instead of a
+string, different casing, a missing/blank input — made the flag
+silently vanish with no warning, and this script quietly defaulted to
+False. That's how an n8n run with whole_country: true still produced a
+single-city, non-whole-country scrape with no error anywhere in the
+logs. Fixed on both ends: scrape.yml now declares these as real
+`boolean` workflow inputs and always passes an explicit "true"/"false"
+value (no more conditional flag construction), and these two flags here
+now use a strict str2bool type that raises a clear argparse error on
+anything it doesn't recognize, instead of defaulting silently.
+
 Usage:
     python -m scraper.main --niche "hair salons" --location "Nelspruit" \
         --max-results 50 --min-rating 3.5 [--webhook-url URL] [--depth 5]
@@ -47,6 +62,23 @@ from scraper.web_discovery import find_social_link
 from scraper.phone_classify import classify_phone
 
 
+def str2bool(value: str) -> bool:
+    """Strict boolean parser for CLI flags that are always passed an
+    explicit value from scrape.yml (as opposed to argparse's store_true,
+    which silently omits the flag — and therefore the value — the moment
+    anything upstream doesn't match exactly). Anything other than a
+    recognized true/false token is a hard error, not a silent False."""
+    v = value.strip().lower()
+    if v in ("true", "1", "yes"):
+        return True
+    if v in ("false", "0", "no", ""):
+        return False
+    raise argparse.ArgumentTypeError(
+        f"expected a boolean ('true'/'false'), got {value!r} — "
+        f"check what scrape.yml is actually passing for this flag"
+    )
+
+
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--niche", required=True)
@@ -59,9 +91,9 @@ def parse_args():
     p.add_argument("--webhook-url", default=os.environ.get("WEBHOOK_URL"))
     p.add_argument("--seen-lookup-url", default=os.environ.get("SEEN_LOOKUP_URL"))
     p.add_argument("--skip-ad-library", action="store_true", help="Skip the Playwright ad-library check (faster, no running_ads signal)")
-    p.add_argument("--skip-directory", action="store_true", help="Skip Yellosa entirely and go straight to Google Maps (escape hatch if a niche has no good directory category match)")
+    p.add_argument("--skip-directory", type=str2bool, default=False, help="Set to true to skip Yellosa entirely and go straight to Google Maps (escape hatch if a niche has no good directory category match)")
     p.add_argument("--max-social-searches", type=int, default=50, help="Max FB/IG discovery searches per run, to protect the search API's free-tier monthly budget — raise if you have a larger Tavily plan")
-    p.add_argument("--whole-country", action="store_true", help="Loop city-by-city across the whole country instead of a single location — the unfiltered/national directory view was confirmed NOT to be a comprehensive national index on its own")
+    p.add_argument("--whole-country", type=str2bool, default=False, help="Set to true to loop city-by-city across the whole country instead of a single location — the unfiltered/national directory view was confirmed NOT to be a comprehensive national index on its own")
     p.add_argument("--max-cities", type=int, default=15, help="How many of the country's biggest cities to loop through in --whole-country mode")
     p.add_argument("--max-maps-workers", type=int, default=2, help="How many Maps/gosom city scrapes to run concurrently in whole-country mode. Keep this low — each worker runs a full Docker+headless-browser instance, much heavier than the directory scrapers' workers")
     p.add_argument("--out", default="leads.json")
