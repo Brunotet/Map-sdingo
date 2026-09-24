@@ -33,13 +33,15 @@ on:
         required: false
         default: "2700"
       skip_directory:
-        description: "Set to 'true' to skip the directory entirely and go straight to Google Maps"
+        description: "Skip the directory entirely and go straight to Google Maps"
         required: false
-        default: "false"
+        type: boolean
+        default: false
       whole_country:
-        description: "Set to 'true' to loop city-by-city across the whole country instead of a single location. WARNING: much longer runtime — a single city can already take 10+ minutes, so this can run well over an hour depending on max_cities."
+        description: "Loop city-by-city across the whole country instead of a single location. WARNING: much longer runtime — a single city can already take 10+ minutes, so this can run well over an hour depending on max_cities."
         required: false
-        default: "false"
+        type: boolean
+        default: false
       max_cities:
         description: "How many of the country's biggest cities to loop through in whole_country mode. Keep this modest — each city costs real time."
         required: false
@@ -76,8 +78,8 @@ jobs:
             --scrape-timeout "${{ inputs.scrape_timeout }}" \
             --webhook-url "${{ inputs.callback_url }}" \
             --max-cities "${{ inputs.max_cities }}" \
-            $( [ "${{ inputs.skip_directory }}" = "true" ] && echo "--skip-directory" ) \
-            $( [ "${{ inputs.whole_country }}" = "true" ] && echo "--whole-country" )
+            --skip-directory "${{ inputs.skip_directory }}" \
+            --whole-country "${{ inputs.whole_country }}"
 
       - name: Upload leads as artifact
         uses: actions/upload-artifact@v4
